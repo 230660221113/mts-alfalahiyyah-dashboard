@@ -1,10 +1,18 @@
-"""Entry point:  streamlit run app.py"""
+"""Entry point: streamlit run app.py"""
 import streamlit as st
 
 from core.auth import current_user, logout
 from core.config import APP_TITLE, school_name
+from ui.styles import inject_global_css
 
-st.set_page_config(page_title=APP_TITLE, page_icon="📊", layout="wide")
+st.set_page_config(
+    page_title=f"{APP_TITLE} — {school_name()}",
+    page_icon="🎓",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+inject_global_css()
 
 user = current_user()
 
@@ -14,9 +22,9 @@ if user is None:
     st.stop()
 
 pages = {
-    "Analitik": [
-        st.Page("views/dashboard.py", title="Dashboard", icon=":material/dashboard:", default=True),
-        st.Page("views/prediksi.py", title="Prediksi", icon=":material/trending_up:"),
+    "Analitik & Peramalan": [
+        st.Page("views/dashboard.py", title="Dashboard Utama", icon=":material/dashboard:", default=True),
+        st.Page("views/prediksi.py", title="Prediksi Siswa", icon=":material/trending_up:"),
     ]
 }
 if user.is_operator:
@@ -26,9 +34,16 @@ if user.is_operator:
     ]
 
 with st.sidebar:
-    st.markdown(f"**{school_name()}**")
-    st.caption(f"{user.nama} · {user.role.capitalize()}")
-    if st.button("Keluar", use_container_width=True):
+    st.markdown(
+        f"""
+        <div class="sidebar-profile">
+            <div class="sidebar-school">🏫 {school_name()}</div>
+            <div class="sidebar-role">👤 {user.nama} · <b>{user.role.capitalize()}</b></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button("Keluar dari Sistem", icon=":material/logout:", use_container_width=True):
         logout()
 
 st.navigation(pages).run()
