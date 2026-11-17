@@ -37,3 +37,23 @@ def donut(labels, values, total, height=190):
     fig.update_layout(height=height, margin=dict(l=0, r=0, t=0, b=0), showlegend=False, paper_bgcolor="#fff", font=FONT,
                       annotations=[dict(text=f"<b>{total}</b><br><span style='font-size:11px;color:{MUTED}'>siswa</span>", showarrow=False, font=dict(size=22, color=INK))])
     return fig
+
+
+def bar_chart(years, values, f_years=None, f_values=None, height=300):
+    short = lambda y: f"{y[2:4]}/{y[7:9]}"
+    fig = go.Figure()
+    fig.add_bar(x=years, y=values, name="Aktual", marker=dict(color=DARK), hovertemplate="%{y:,.0f} siswa<extra>Aktual</extra>")
+    cats = list(years)
+    if f_years:
+        cats += list(f_years)
+        fig.add_bar(x=f_years, y=[round(v) for v in f_values], name="Prediksi", marker=dict(color="#DDEFC9", line=dict(color="#6FA83A", width=1.5)),
+                    hovertemplate="%{y:,.0f} siswa<extra>Prediksi</extra>")
+    fig.update_layout(height=height, bargap=.35, showlegend=False, margin=dict(l=0, r=0, t=8, b=0), font=FONT, template="plotly_white",
+                      paper_bgcolor="#fff", plot_bgcolor="#fff", hoverlabel=dict(bgcolor="#fff", bordercolor="#E6EBE8", font=dict(color=INK)))
+    fig.update_xaxes(tickmode="array", tickvals=cats, ticktext=[short(c) for c in cats], showgrid=False, linecolor="#DCE6E0", tickfont=dict(color=MUTED))
+    fig.update_yaxes(gridcolor=GRID, zeroline=False, rangemode="tozero", tickfont=dict(color=MUTED), tickformat=",.0f")
+    try:
+        fig.update_traces(marker_cornerradius=7)
+    except Exception:
+        pass
+    return fig
