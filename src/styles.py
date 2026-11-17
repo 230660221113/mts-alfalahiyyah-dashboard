@@ -45,6 +45,31 @@ html, body, [class*="css"], .stApp { font-family: 'Plus Jakarta Sans', system-ui
 }
 .stButton > button:hover, .stDownloadButton > button:hover { background: #244A40; color: #fff; }
 .stButton > button:focus-visible, .stDownloadButton > button:focus-visible { outline: 3px solid #A5D17A; }
+
+/* input & label selalu terbaca, apa pun mode browser */
+[data-testid="stWidgetLabel"] p { color: #1F2A27 !important; font-weight: 600; font-size: .85rem; }
+[data-baseweb="input"], [data-baseweb="base-input"] { background: #fff !important; border-radius: 10px; }
+[data-baseweb="input"] { border: 1px solid #D5DDD8 !important; }
+[data-baseweb="input"]:focus-within { border-color: #2F5D50 !important; box-shadow: 0 0 0 3px rgba(47,93,80,.18); }
+input { color: #1F2A27 !important; }
+
+/* halaman masuk */
+[data-testid="stForm"] { border: 0; padding: 0; }
+[data-testid="stFormSubmitButton"] button { background: #2F5D50; color: #fff; border: 0; border-radius: 10px; font-weight: 700; padding: .6rem 1rem; }
+[data-testid="stFormSubmitButton"] button:hover { background: #244A40; color: #fff; }
+.login-title { font-size: 1.9rem; font-weight: 800; color: #1F2A27; margin: 0 0 .3rem; }
+.login-sub { color: #6B7A75; font-size: .92rem; margin-bottom: 1.4rem; }
+.demo-hint { background: #EEF5EA; border: 1px solid #D5E6C8; border-radius: 12px; padding: 10px 14px; font-size: .8rem; color: #3C5A33; margin-top: 14px; }
+.hero { background: linear-gradient(160deg, #2F5D50 0%, #1B3A31 100%); border-radius: 24px; padding: 36px; color: #fff;
+        min-height: 82vh; display: flex; flex-direction: column; justify-content: space-between; }
+.hero h2 { font-size: 1.7rem; font-weight: 800; line-height: 1.25; margin: 0 0 .5rem; color: #fff; }
+.hero p { color: #CFE3D8; font-size: .92rem; margin: 0; }
+.mini { background: #fff; color: #1F2A27; border-radius: 16px; padding: 16px 18px; margin-bottom: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.18); position: relative; }
+.mini.b { margin-left: 44px; }
+.mini .l { font-size: .78rem; color: #6B7A75; font-weight: 600; }
+.mini .n { font-size: 1.5rem; font-weight: 800; }
+.mini svg { position: absolute; right: 16px; bottom: 14px; width: 92px; height: 34px; }
+.hero .note { font-size: .72rem; color: #A9C7B8; }
 @media (max-width: 900px) { .kpi-row { grid-template-columns: 1fr; } }
 </style>
 """
