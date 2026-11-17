@@ -1,6 +1,9 @@
 [theme]
-primaryColor = "#1F4E79"
-base = "light"
+primaryColor = "#0F4C81"
+backgroundColor = "#F4F7FB"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1E293B"
+font = "sans serif"
 
 [server]
 showEmailPrompt = false
