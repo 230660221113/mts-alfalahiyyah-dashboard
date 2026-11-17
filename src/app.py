@@ -58,13 +58,17 @@ def main():
         st.markdown(f"<div class='card-title'>{title}</div><div class='card-sub'>{sub}</div>", unsafe_allow_html=True)
 
     def seg(name, default=1):
-        cur = st.session_state.setdefault(name, default)
-        cols = st.columns([1, 1, 1, 3])
-        for c, o in zip(cols, [1, 2, 3]):
-            if c.button(f"{o} tahun", key=f"seg-{'on' if cur == o else 'off'}-{name}-{o}", use_container_width=True):
-                st.session_state[name] = o
-                st.rerun()
-        return st.session_state[name]
+        # Radio horizontal keeps every period label readable at all widths.
+        if name not in st.session_state:
+            st.session_state[name] = default
+        return st.radio(
+            "Horizon prediksi",
+            options=[1, 2, 3],
+            format_func=lambda value: f"{value} tahun",
+            horizontal=True,
+            label_visibility="collapsed",
+            key=f"period-{name}",
+        )
 
     @st.cache_data
     def run_forecast(values: tuple, h: int):
@@ -127,7 +131,7 @@ def main():
                  + f"<div class='sc'><span class='ic' style='background:#EAF6D9;color:#4E8A1F'>{I_SPARK}</span><b>{fmt(pred[0])}</b><span class='l'>Prediksi {nxt}</span><div class='dl'><span>Model terbaik: {best}</span></div></div>"
                  + f"<div class='sc'><span class='ic' style='background:#E1EFF5;color:#25708F'>{I_USERS}</span><b>{L} : {P}</b><span class='l'>Laki-laki : Perempuan</span><div class='dl'><span>{L / (L + P) * 100:.0f}% laki-laki</span></div></div></div>")
         with st.container(key="hero"):
-            left, right = st.columns([1.55, 1], gap="medium")
+            left, right = st.columns([1.35, 1], gap="large")
             with left:
                 st.markdown(f"<div class='hl'><h2>Selamat {SAPA}, {role}!</h2><p>Pantau perkembangan peserta didik dan rencanakan kelas untuk tahun ajaran berikutnya.</p></div>{stats}", unsafe_allow_html=True)
             with right:
