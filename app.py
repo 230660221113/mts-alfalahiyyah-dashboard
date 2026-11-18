@@ -31,46 +31,77 @@ def forecast(df_json: str, h: int, kap: int, rasio: int) -> dict:
     return run_auto_forecast(pd.read_json(io.StringIO(df_json)), h, kap, rasio)
 
 
-# ============================== LOGIN ==============================
-HERO = f"""<div class='hero'>
-  <div style='font-weight:800'>🎓 MTs Al-Falahiyyah</div>
+# ============================== HERO & LOGIN ==============================
+HERO = f"""<div style='background: radial-gradient(120% 60% at 0% 100%, rgba(31,122,92,.5), transparent 65%), #0C241E; border-radius: 20px; padding: 40px 36px; color: #fff; height: 100%; display: flex; flex-direction: column; justify-content: space-between; border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 20px 40px rgba(12,36,30,0.15);'>
   <div>
-    <div class='mini'><div class='l'>Peserta didik</div><div class='n'>Tren per tahun ajaran</div>{charts.sparkline([3, 4, 4, 6, 7, 9, 8, 11], "#1F7A5C")}</div>
-    <div class='mini b'><div class='l'>Prediksi</div><div class='n'>Tahun ajaran berikutnya</div>{charts.sparkline([3, 4, 5, 5, 7, 8, 10, 12], "#7FB84E")}</div>
+    <div style='display: inline-flex; align-items: center; gap: 8px; background: rgba(165,209,122,0.12); color: #A5D17A; padding: 6px 14px; border-radius: 999px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 20px;'>
+      <span>🎓</span> Sistem Informasi Akademik
+    </div>
+    <h2 style='font-size: 1.85rem; font-weight: 800; line-height: 1.25; color: #fff; margin: 0 0 12px 0;'>MTs Al-Falahiyyah</h2>
+    <p style='color: #CFE3D8; font-size: 0.92rem; line-height: 1.6; margin: 0;'>Kelola data peserta didik, pantau perkembangan kelas, dan hasilkan proyeksi tahun ajaran secara akurat dalam satu kendali terpusat.</p>
   </div>
-  <div><h2>Pantau dan prediksi jumlah peserta didik dalam satu dashboard</h2>
-  <p>Rencanakan kelas dan guru untuk tahun ajaran berikutnya.</p></div></div>"""
+  
+  <div style='margin: 32px 0; display: flex; flex-direction: column; gap: 12px;'>
+    <div style='display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); padding: 12px 16px; border-radius: 12px;'>
+      <span style='font-size: 1.2rem;'>📊</span>
+      <div style='font-size: 0.85rem; color: #E2ECE7; font-weight: 600;'>Analitik & Proyeksi Rombel Otomatis</div>
+    </div>
+    <div style='display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); padding: 12px 16px; border-radius: 12px;'>
+      <span style='font-size: 1.2rem;'>🔒</span>
+      <div style='font-size: 0.85rem; color: #E2ECE7; font-weight: 600;'>Keamanan Data Sesuai Standar 3NF</div>
+    </div>
+  </div>
+
+  <div style='font-size: 0.78rem; color: #8FA89C; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 16px;'>
+    &copy; 2026 MTs Al-Falahiyyah Sumedang &bull; All rights reserved
+  </div>
+</div>"""
 
 
 def do_login(email: str, password: str):
     email = email.strip().lower()
     if not email or not password:
-        st.error("Isi email dan kata sandi.")
+        st.error("Silakan masukkan email dan kata sandi Anda.")
         return
     sb = get_supabase()
-    if not sb:  # mode demo (tanpa Supabase)
+    if not sb:  # Mode demo (tanpa Supabase)
         init_demo_state()
         u = st.session_state["demo_users"].get(email)
         if u and u["password"] == password and u.get("aktif", True):
-            st.session_state["user"] = {"id": "demo-user", "email": email, "nama": u["nama"], "jabatan": u["jabatan"], "role": u["role"]}
+            st.session_state["user"] = {
+                "id": "demo-user", 
+                "email": email, 
+                "nama": u["nama"], 
+                "jabatan": u["jabatan"], 
+                "role": u["role"]
+            }
             st.rerun()
         st.error("Email atau kata sandi tidak sesuai.")
         return
     try:
-        uid = sb.auth.sign_in_with_password({"email": email, "password": password}).user.id
+        auth_res = sb.auth.sign_in_with_password({"email": email, "password": password})
+        uid = auth_res.user.id
     except Exception:
-        st.error("Email atau kata sandi tidak sesuai.")
+        st.error("Email atau kata sandi tidak valid.")
         return
     try:
         prof = sb.table("profiles").select("*").eq("id", uid).single().execute().data
     except Exception:
         prof = None
     if not prof or not prof.get("aktif", True):
-        sb.auth.sign_out()
-        st.error("Akun belum aktif atau profilnya belum diatur. Hubungi operator.")
+        try:
+            sb.auth.sign_out()
+        except Exception:
+            pass
+        st.error("Akun belum aktif atau profil belum diatur. Silakan hubungi operator.")
         return
-    st.session_state["user"] = {"id": uid, "email": email, "nama": prof.get("nama") or email,
-                                "jabatan": prof.get("jabatan") or "Staf Madrasah", "role": prof.get("role", "kepala_sekolah")}
+    st.session_state["user"] = {
+        "id": uid, 
+        "email": email, 
+        "nama": prof.get("nama") or email,
+        "jabatan": prof.get("jabatan") or "Staf Madrasah", 
+        "role": prof.get("role", "kepala_sekolah")
+    }
     st.rerun()
 
 
@@ -78,25 +109,50 @@ def render_login():
     s = get_settings()
     wa = "".join(ch for ch in s.get("wa_operator", "") if ch.isdigit())
     pesan = urllib.parse.quote(f"Assalamu'alaikum Operator {s.get('nama_madrasah', 'MTs Al-Falahiyyah')}, saya lupa kata sandi akun dashboard. Mohon bantuan reset.")
-    left, right = st.columns([1, 1.1], gap="large")
-    with left:
-        st.markdown("<div style='height:14vh'></div><div class='login-title'>Selamat datang</div>"
-                    "<div class='login-sub'>Masuk untuk melihat dashboard kesiswaan.</div>", unsafe_allow_html=True)
-        with st.form("login"):
-            email = st.text_input("Email", placeholder="nama@alfalahiyyah.sch.id")
-            pw = st.text_input("Kata sandi", type="password", placeholder="Masukkan kata sandi")
-            ok = st.form_submit_button("Masuk", use_container_width=True)
-        if ok:
-            do_login(email, pw)
-        if wa:
-            st.markdown(f"<div class='login-sub' style='margin-top:12px'>Lupa kata sandi? <a href='https://wa.me/{wa}?text={pesan}' target='_blank'>Hubungi operator via WhatsApp</a></div>", unsafe_allow_html=True)
-        if not is_supabase_configured():
-            st.markdown("<div class='demo-hint'><b>Mode demo</b><br>operator@alfalahiyyah.sch.id / operator123<br>kepsek@alfalahiyyah.sch.id / kepsek123</div>", unsafe_allow_html=True)
-    with right:
-        st.markdown(HERO, unsafe_allow_html=True)
+    
+    _, center_col, _ = st.columns([0.6, 2.4, 0.6])
+    with center_col:
+        st.markdown("<div style='height: 3vh;'></div>", unsafe_allow_html=True)
+        col_form, col_hero = st.columns([1, 1.15], gap="large")
+        
+        with col_form:
+            st.markdown(
+                "<div style='padding-top: 12px;'>"
+                "<div style='font-size: 1.7rem; font-weight: 800; color: #14221D; margin-bottom: 6px;'>Selamat Datang</div>"
+                "<div style='color: #5E6E67; font-size: 0.88rem; line-height: 1.5; margin-bottom: 24px;'>Silakan masuk menggunakan akun resmi madrasah Anda.</div>"
+                "</div>", 
+                unsafe_allow_html=True
+            )
+            
+            with st.form("login_form", clear_on_submit=False):
+                email = st.text_input("Email", placeholder="nama@alfalahiyyah.sch.id")
+                pw = st.text_input("Kata Sandi", type="password", placeholder="••••••••")
+                st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
+                ok = st.form_submit_button("Masuk ke Sistem", use_container_width=True)
+                
+            if ok:
+                do_login(email, pw)
+                
+            if wa:
+                st.markdown(f"<div style='margin-top: 16px; font-size: 0.82rem; color: #5E6E67;'>Lupa kata sandi? <a href='https://wa.me/{wa}?text={pesan}' target='_blank' style='color: #1F7A5C; font-weight: 600; text-decoration: none;'>Hubungi Operator</a></div>", unsafe_allow_html=True)
+                
+            if not is_supabase_configured():
+                st.markdown(
+                    "<div style='margin-top: 18px; background: #F0F7EC; border: 1px solid #D2E7C4; border-radius: 12px; padding: 12px 14px; font-size: 0.78rem; color: #315025; line-height: 1.5;'>"
+                    "<b>Mode Demo Aktif:</b><br>"
+                    "• Operator: <code>operator@alfalahiyyah.sch.id</code> / <code>operator123</code><br>"
+                    "• Kepsek: <code>kepsek@alfalahiyyah.sch.id</code> / <code>kepsek123</code>"
+                    "</div>", 
+                    unsafe_allow_html=True
+                )
+                
+        with col_hero:
+            st.markdown(HERO, unsafe_allow_html=True)
+            
+        st.markdown("<div style='height: 3vh;'></div>", unsafe_allow_html=True)
 
 
-# ============================== HALAMAN ==============================
+# ============================== HALAMAN UTAMA ==============================
 def empty_state(is_op: bool):
     with st.container(key="card-kosong"):
         ui.card_head("Belum ada data peserta didik",
@@ -279,185 +335,4 @@ def page_admin(user, settings):
                         st.rerun()
         else:
             init_demo_state()
-            st.dataframe(pd.DataFrame([{"Email": k, "Nama": v["nama"], "Peran": v["role"]} for k, v in st.session_state["demo_users"].items()]), hide_index=True)
-    with t2, st.container(key="card-set"), st.form("f_set"):
-        ui.card_head("Pengaturan madrasah", "Dipakai untuk menghitung kebutuhan rombel dan guru")
-        nama_m = st.text_input("Nama madrasah", value=settings.get("nama_madrasah", "MTs Al-Falahiyyah"))
-        wa = st.text_input("WhatsApp operator (628xxx)", value=settings.get("wa_operator", ""))
-        c1, c2 = st.columns(2)
-        kap = c1.number_input("Kapasitas siswa per rombel", 15, 45, int(settings.get("kapasitas_rombel", 32)))
-        ras = c2.number_input("Rasio siswa per guru", 10, 40, int(settings.get("rasio_guru_siswa", 20)))
-        if st.form_submit_button("Simpan pengaturan"):
-            for k, v in [("nama_madrasah", nama_m.strip()), ("wa_operator", "".join(c for c in wa if c.isdigit())), ("kapasitas_rombel", kap), ("rasio_guru_siswa", ras)]:
-                save_setting(k, str(v))
-            st.success("Pengaturan tersimpan.")
-            st.rerun()
-
-
-# ============================== RANGKA ==============================
-def main():
-    if "user" not in st.session_state:
-        return render_login()
-    user = st.session_state["user"]
-    is_op = user["role"] == "operator"
-    settings = get_settings()
-    df = get_rekap_siswa_aktif()
-
-    pages = [("home", "Dashboard", ":material/dashboard:"), ("fc", "Proyeksi", ":material/trending_up:")]
-    pages += [("up", "Unggah Data", ":material/upload:"), ("adm", "Pengguna & Pengaturan", ":material/settings:")] if is_op else [("lap", "Laporan", ":material/description:")]
-    page = st.session_state.setdefault("page", "home")
-    if page not in [p[0] for p in pages]:
-        page = "home"
-
-    with st.sidebar:
-        st.markdown(f"<div class='logo'><i>🎓</i>{esc(settings.get('nama_madrasah', 'MTs Al-Falahiyyah'))}</div>", unsafe_allow_html=True)
-        for pid, label, icon in pages:
-            if st.button(label, icon=icon, key=f"nav-{'on' if page == pid else 'off'}-{pid}", use_container_width=True):
-                st.session_state["page"] = pid
-                st.rerun()
-        st.markdown("<div style='height:max(20px, calc(100vh - 720px))'></div>", unsafe_allow_html=True)
-        n = len(df)
-        segs = "".join("<i></i>" if k < n else "<i class='o'></i>" for k in range(max(10, n)))
-        st.markdown(f"<div class='sbcard'>Data tersimpan<small>{n} tahun ajaran</small><div class='seg' aria-hidden='true'>{segs}</div></div>"
-                    f"<div class='me'><span class='av'>{esc(user['nama'][:1].upper())}</span><div>{esc(user['nama'])}<small>{esc(user['jabatan'])}</small></div></div>", unsafe_allow_html=True)
-        if st.button("Keluar", icon=":material/logout:", key="logout", use_container_width=True):
-            sb = get_supabase()
-            if sb:
-                try:
-                    sb.auth.sign_out()
-                except Exception:
-                    pass
-            st.session_state.clear()
-            st.rerun()
-
-    if page == "home":
-        page_dashboard(df, settings, is_op, user["nama"])
-    elif page == "fc":
-        page_proyeksi(df, settings)
-    elif page == "up" and is_op:
-        page_unggah(user)
-    elif page == "adm" and is_op:
-        page_admin(user, settings)
-    elif page == "lap":
-        page_laporan(df, settings)
-
-# ============================== LOGIN ==============================
-HERO = f"""<div style='background: radial-gradient(120% 60% at 0% 100%, rgba(31,122,92,.5), transparent 65%), #0C241E; border-radius: 20px; padding: 40px 36px; color: #fff; height: 100%; display: flex; flex-direction: column; justify-content: space-between; border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 20px 40px rgba(12,36,30,0.15);'>
-  <div>
-    <div style='display: inline-flex; align-items: center; gap: 8px; background: rgba(165,209,122,0.12); color: #A5D17A; padding: 6px 14px; border-radius: 999px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 20px;'>
-      <span>🎓</span> Sistem Informasi Akademik
-    </div>
-    <h2 style='font-size: 1.85rem; font-weight: 800; line-height: 1.25; color: #fff; margin: 0 0 12px 0;'>MTs Al-Falahiyyah</h2>
-    <p style='color: #CFE3D8; font-size: 0.92rem; line-height: 1.6; margin: 0;'>Kelola data peserta didik, pantau perkembangan kelas, dan hasilkan proyeksi tahun ajaran secara akurat dalam satu kendali terpusat.</p>
-  </div>
-  
-  <div style='margin: 32px 0; display: flex; flex-direction: column; gap: 12px;'>
-    <div style='display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); padding: 12px 16px; border-radius: 12px;'>
-      <span style='font-size: 1.2rem;'>📊</span>
-      <div style='font-size: 0.85rem; color: #E2ECE7; font-weight: 600;'>Analitik & Proyeksi Rombel Otomatis</div>
-    </div>
-    <div style='display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); padding: 12px 16px; border-radius: 12px;'>
-      <span style='font-size: 1.2rem;'>🔒</span>
-      <div style='font-size: 0.85rem; color: #E2ECE7; font-weight: 600;'>Keamanan Data Sesuai Standar 3NF</div>
-    </div>
-  </div>
-
-  <div style='font-size: 0.78rem; color: #8FA89C; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 16px;'>
-    &copy; 2026 MTs Al-Falahiyyah Sumedang &bull; All rights reserved
-  </div>
-</div>"""
-
-
-def do_login(email: str, password: str):
-    email = email.strip().lower()
-    if not email or not password:
-        st.error("Silakan masukkan email dan kata sandi Anda.")
-        return
-    sb = get_supabase()
-    if not sb:  # Mode demo (tanpa Supabase)
-        init_demo_state()
-        u = st.session_state["demo_users"].get(email)
-        if u and u["password"] == password and u.get("aktif", True):
-            st.session_state["user"] = {
-                "id": "demo-user", 
-                "email": email, 
-                "nama": u["nama"], 
-                "jabatan": u["jabatan"], 
-                "role": u["role"]
-            }
-            st.rerun()
-        st.error("Email atau kata sandi tidak sesuai.")
-        return
-    try:
-        auth_res = sb.auth.sign_in_with_password({"email": email, "password": password})
-        uid = auth_res.user.id
-    except Exception:
-        st.error("Email atau kata sandi tidak valid.")
-        return
-    try:
-        prof = sb.table("profiles").select("*").eq("id", uid).single().execute().data
-    except Exception:
-        prof = None
-    if not prof or not prof.get("aktif", True):
-        try:
-            sb.auth.sign_out()
-        except Exception:
-            pass
-        st.error("Akun belum aktif atau profil belum diatur. Silakan hubungi operator.")
-        return
-    st.session_state["user"] = {
-        "id": uid, 
-        "email": email, 
-        "nama": prof.get("nama") or email,
-        "jabatan": prof.get("jabatan") or "Staf Madrasah", 
-        "role": prof.get("role", "kepala_sekolah")
-    }
-    st.rerun()
-
-
-def render_login():
-    s = get_settings()
-    wa = "".join(ch for ch in s.get("wa_operator", "") if ch.isdigit())
-    pesan = urllib.parse.quote(f"Assalamu'alaikum Operator {s.get('nama_madrasah', 'MTs Al-Falahiyyah')}, saya lupa kata sandi akun dashboard. Mohon bantuan reset.")
-    
-    _, center_col, _ = st.columns([0.6, 2.4, 0.6])
-    with center_col:
-        st.markdown("<div style='height: 3vh;'></div>", unsafe_allow_html=True)
-        col_form, col_hero = st.columns([1, 1.15], gap="large")
-        
-        with col_form:
-            st.markdown(
-                "<div style='padding-top: 12px;'>"
-                "<div style='font-size: 1.7rem; font-weight: 800; color: #14221D; margin-bottom: 6px;'>Selamat Datang</div>"
-                "<div style='color: #5E6E67; font-size: 0.88rem; line-height: 1.5; margin-bottom: 24px;'>Silakan masuk menggunakan akun resmi madrasah Anda.</div>"
-                "</div>", 
-                unsafe_allow_html=True
-            )
-            
-            with st.form("login_form", clear_on_submit=False):
-                email = st.text_input("Email", placeholder="nama@alfalahiyyah.sch.id")
-                pw = st.text_input("Kata Sandi", type="password", placeholder="••••••••")
-                st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
-                ok = st.form_submit_button("Masuk ke Sistem", use_container_width=True)
-                
-            if ok:
-                do_login(email, pw)
-                
-            if wa:
-                st.markdown(f"<div style='margin-top: 16px; font-size: 0.82rem; color: #5E6E67;'>Lupa kata sandi? <a href='https://wa.me/{wa}?text={pesan}' target='_blank' style='color: #1F7A5C; font-weight: 600; text-decoration: none;'>Hubungi Operator</a></div>", unsafe_allow_html=True)
-                
-            if not is_supabase_configured():
-                st.markdown(
-                    "<div style='margin-top: 18px; background: #F0F7EC; border: 1px solid #D2E7C4; border-radius: 12px; padding: 12px 14px; font-size: 0.78rem; color: #315025; line-height: 1.5;'>"
-                    "<b>Mode Demo Aktif:</b><br>"
-                    "• Operator: <code>operator@alfalahiyyah.sch.id</code> / <code>operator123</code><br>"
-                    "• Kepsek: <code>kepsek@alfalahiyyah.sch.id</code> / <code>kepsek123</code>"
-                    "</div>", 
-                    unsafe_allow_html=True
-                )
-                
-        with col_hero:
-            st.markdown(HERO, unsafe_allow_html=True)
-            
-        st.markdown("<div style='height: 3vh;'></div>", unsafe_allow_html=True)
-main()
+            st.dataframe(pd.DataFrame([{"Email": k, "Nama": v["nama"], "Peran": v["
