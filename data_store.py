@@ -19,8 +19,7 @@ def is_supabase_configured() -> bool:
 
 
 def get_supabase() -> "Client | None":
-    """Satu klien PER SESI pengguna (disimpan di session_state), bukan satu klien bersama.
-    Dengan begitu token login operator dan kepala sekolah tidak saling tertukar."""
+    """Satu klien PER SESI pengguna (disimpan di session_state), bukan satu klien bersama."""
     if not is_supabase_configured():
         return None
     if "_sb" not in st.session_state:
@@ -94,7 +93,7 @@ def save_setting(kunci: str, nilai: str):
 
 def get_rekap_siswa_aktif() -> pd.DataFrame:
     sb = get_supabase()
-    if sb:  # mode produksi: JANGAN jatuh ke data contoh kalau kosong
+    if sb:
         try:
             res = sb.table("v_rekap_siswa_aktif").select("*").order("tahun_mulai").execute()
             return pd.DataFrame(res.data or [])
@@ -120,7 +119,6 @@ def get_alumni_summary() -> tuple[int, pd.DataFrame]:
     sb = get_supabase()
     if sb:
         try:
-            # View agregat (tanpa NIK/nama) agar bisa dibaca semua peran
             res = sb.table("v_rekap_alumni").select("*").execute()
             df = pd.DataFrame(res.data or [])
             total = int(df["total_alumni"].sum()) if not df.empty else 0
@@ -154,7 +152,7 @@ def upsert_siswa_aktif_3nf(df_clean: pd.DataFrame, nama_file: str, user_id: str 
             })
         sb.table("master_kelas").upsert(kelas_records).execute()
 
-        # 3. Master Siswa (status_terkini = Aktif)
+        # 3. Master Siswa
         df_unique_siswa = df_clean.drop_duplicates(subset=["nik"]).copy()
         siswa_records = []
         for _, r in df_unique_siswa.iterrows():
@@ -208,3 +206,50 @@ def upsert_siswa_aktif_3nf(df_clean: pd.DataFrame, nama_file: str, user_id: str 
             }])
             df_old = pd.concat([df_old[df_old["tahun_ajaran"] != ta_str], new_row], ignore_index=True)
         st.session_state["demo_rekap"] = df_old.sort_values("tahun_mulai").reset_index(drop=True)
+
+
+def upsert_alumni_3nf(df_clean: pd.DataFrame, nama_file: str, user_id: str | None = None):
+    """Memindahkan status siswa menjadi Alumni & memisahkannya dari hitungan siswa aktif."""
+    sb = get_supabase()
+    if sb:
+        ta_records = (
+            df_clean[["tahun_ajaran_lulus", "tahun_mulai", "tahun_selesai"]]
+            .drop_duplicates()
+            .rename(columns={"tahun_ajaran_lulus": "tahun_ajaran"})
+            .to_dict(orient="records")
+        )
+        sb.table("master_tahun_ajaran").upsert(ta_records).execute()
+
+        df_unique_alumni = df_clean.drop_duplicates(subset=["nik"]).copy()
+        siswa_records = []
+        for _, r in df_unique_alumni.iterrows():
+            nisn = r.get("nisn")
+            nisn_val = str(nisn).strip() if pd.notna(nisn) and str(nisn).strip() and str(nisn).lower() not in ("nan", "none", "") else None
+            
+            siswa_records.append({
+                "nik": str(r["nik"]).strip(),
+                "nisn": nisn_val,
+                "nama_lengkap": str(r["nama_lengkap"]).strip(),
+                "jenis_kelamin": str(r["jenis_kelamin"]).strip(),
+                "status_terkini": "Alumni",
+            })
+        
+        for i in range(0, len(siswa_records), 50):
+            sb.table("master_siswa").upsert(siswa_records[i:i+50]).execute()
+
+        alumni_records = df_clean[[
+            "nik", "tahun_masuk", "tahun_lulus", "tahun_ajaran_lulus", "no_ijazah", "melanjutkan_ke"
+        ]].to_dict(orient="records")
+        
+        for i in range(0, len(alumni_records), 50):
+            sb.table("riwayat_alumni").upsert(alumni_records[i:i+50]).execute()
+
+        sb.table("log_unggah_data").insert({
+            "jenis_unggah": "Alumni",
+            "nama_file": nama_file,
+            "jumlah_baris": len(df_clean),
+            "diunggah_oleh": user_id,
+        }).execute()
+    else:
+        init_demo_state()
+        st.session_state["demo_alumni_count"] += len(df_clean)
