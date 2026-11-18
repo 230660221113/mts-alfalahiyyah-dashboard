@@ -341,5 +341,123 @@ def main():
     elif page == "lap":
         page_laporan(df, settings)
 
+# ============================== LOGIN ==============================
+HERO = f"""<div style='background: radial-gradient(120% 60% at 0% 100%, rgba(31,122,92,.5), transparent 65%), #0C241E; border-radius: 20px; padding: 40px 36px; color: #fff; height: 100%; display: flex; flex-direction: column; justify-content: space-between; border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 20px 40px rgba(12,36,30,0.15);'>
+  <div>
+    <div style='display: inline-flex; align-items: center; gap: 8px; background: rgba(165,209,122,0.12); color: #A5D17A; padding: 6px 14px; border-radius: 999px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 20px;'>
+      <span>🎓</span> Sistem Informasi Akademik
+    </div>
+    <h2 style='font-size: 1.85rem; font-weight: 800; line-height: 1.25; color: #fff; margin: 0 0 12px 0;'>MTs Al-Falahiyyah</h2>
+    <p style='color: #CFE3D8; font-size: 0.92rem; line-height: 1.6; margin: 0;'>Kelola data peserta didik, pantau perkembangan kelas, dan hasilkan proyeksi tahun ajaran secara akurat dalam satu kendali terpusat.</p>
+  </div>
+  
+  <div style='margin: 32px 0; display: flex; flex-direction: column; gap: 12px;'>
+    <div style='display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); padding: 12px 16px; border-radius: 12px;'>
+      <span style='font-size: 1.2rem;'>📊</span>
+      <div style='font-size: 0.85rem; color: #E2ECE7; font-weight: 600;'>Analitik & Proyeksi Rombel Otomatis</div>
+    </div>
+    <div style='display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); padding: 12px 16px; border-radius: 12px;'>
+      <span style='font-size: 1.2rem;'>🔒</span>
+      <div style='font-size: 0.85rem; color: #E2ECE7; font-weight: 600;'>Keamanan Data Sesuai Standar 3NF</div>
+    </div>
+  </div>
 
+  <div style='font-size: 0.78rem; color: #8FA89C; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 16px;'>
+    &copy; 2026 MTs Al-Falahiyyah Sumedang &bull; All rights reserved
+  </div>
+</div>"""
+
+
+def do_login(email: str, password: str):
+    email = email.strip().lower()
+    if not email or not password:
+        st.error("Silakan masukkan email dan kata sandi Anda.")
+        return
+    sb = get_supabase()
+    if not sb:  # Mode demo (tanpa Supabase)
+        init_demo_state()
+        u = st.session_state["demo_users"].get(email)
+        if u and u["password"] == password and u.get("aktif", True):
+            st.session_state["user"] = {
+                "id": "demo-user", 
+                "email": email, 
+                "nama": u["nama"], 
+                "jabatan": u["jabatan"], 
+                "role": u["role"]
+            }
+            st.rerun()
+        st.error("Email atau kata sandi tidak sesuai.")
+        return
+    try:
+        auth_res = sb.auth.sign_in_with_password({"email": email, "password": password})
+        uid = auth_res.user.id
+    except Exception:
+        st.error("Email atau kata sandi tidak valid.")
+        return
+    try:
+        prof = sb.table("profiles").select("*").eq("id", uid).single().execute().data
+    except Exception:
+        prof = None
+    if not prof or not prof.get("aktif", True):
+        try:
+            sb.auth.sign_out()
+        except Exception:
+            pass
+        st.error("Akun belum aktif atau profil belum diatur. Silakan hubungi operator.")
+        return
+    st.session_state["user"] = {
+        "id": uid, 
+        "email": email, 
+        "nama": prof.get("nama") or email,
+        "jabatan": prof.get("jabatan") or "Staf Madrasah", 
+        "role": prof.get("role", "kepala_sekolah")
+    }
+    st.rerun()
+
+
+def render_login():
+    s = get_settings()
+    wa = "".join(ch for ch in s.get("wa_operator", "") if ch.isdigit())
+    pesan = urllib.parse.quote(f"Assalamu'alaikum Operator {s.get('nama_madrasah', 'MTs Al-Falahiyyah')}, saya lupa kata sandi akun dashboard. Mohon bantuan reset.")
+    
+    _, center_col, _ = st.columns([0.6, 2.4, 0.6])
+    with center_col:
+        st.markdown("<div style='height: 3vh;'></div>", unsafe_allow_html=True)
+        col_form, col_hero = st.columns([1, 1.15], gap="large")
+        
+        with col_form:
+            st.markdown(
+                "<div style='padding-top: 12px;'>"
+                "<div style='font-size: 1.7rem; font-weight: 800; color: #14221D; margin-bottom: 6px;'>Selamat Datang</div>"
+                "<div style='color: #5E6E67; font-size: 0.88rem; line-height: 1.5; margin-bottom: 24px;'>Silakan masuk menggunakan akun resmi madrasah Anda.</div>"
+                "</div>", 
+                unsafe_allow_html=True
+            )
+            
+            with st.form("login_form", clear_on_submit=False):
+                email = st.text_input("Email", placeholder="nama@alfalahiyyah.sch.id")
+                pw = st.text_input("Kata Sandi", type="password", placeholder="••••••••")
+                st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
+                ok = st.form_submit_button("Masuk ke Sistem", use_container_width=True)
+                
+            if ok:
+                do_login(email, pw)
+                
+            if wa:
+                st.markdown(f"<div style='margin-top: 16px; font-size: 0.82rem; color: #5E6E67;'>Lupa kata sandi? <a href='https://wa.me/{wa}?text={pesan}' target='_blank' style='color: #1F7A5C; font-weight: 600; text-decoration: none;'>Hubungi Operator</a></div>", unsafe_allow_html=True)
+                
+            if not is_supabase_configured():
+                st.markdown(
+                    "<div style='margin-top: 18px; background: #F0F7EC; border: 1px solid #D2E7C4; border-radius: 12px; padding: 12px 14px; font-size: 0.78rem; color: #315025; line-height: 1.5;'>"
+                    "<b>Mode Demo Aktif:</b><br>"
+                    "• Operator: <code>operator@alfalahiyyah.sch.id</code> / <code>operator123</code><br>"
+                    "• Kepsek: <code>kepsek@alfalahiyyah.sch.id</code> / <code>kepsek123</code>"
+                    "</div>", 
+                    unsafe_allow_html=True
+                )
+                
+        with col_hero:
+            st.markdown(HERO, unsafe_allow_html=True)
+            
+        st.markdown("<div style='height: 3vh;'></div>", unsafe_allow_html=True)
 main()
