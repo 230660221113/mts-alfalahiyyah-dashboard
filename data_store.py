@@ -107,20 +107,11 @@ def get_alumni_summary() -> tuple[int, pd.DataFrame]:
     sb = get_supabase()
     if sb:
         try:
-            res = sb.table("riwayat_alumni").select("nik, tahun_lulus, tahun_ajaran_lulus, melanjutkan_ke, master_siswa(nama_lengkap, jenis_kelamin)").execute()
-            rows = res.data or []
-            flat = []
-            for r in rows:
-                ms = r.get("master_siswa") or {}
-                flat.append({
-                    "NIK": r["nik"],
-                    "Nama_Lengkap": ms.get("nama_lengkap", ""),
-                    "JK": ms.get("jenis_kelamin", ""),
-                    "Tahun_Lulus": r["tahun_lulus"],
-                    "Tahun_Ajaran_Lulus": r["tahun_ajaran_lulus"],
-                    "Melanjutkan_Ke": r.get("melanjutkan_ke", ""),
-                })
-            return len(flat), pd.DataFrame(flat)
+            # View agregat (tanpa NIK/nama) agar bisa dibaca semua peran
+            res = sb.table("v_rekap_alumni").select("*").execute()
+            df = pd.DataFrame(res.data or [])
+            total = int(df["total_alumni"].sum()) if not df.empty else 0
+            return total, df
         except Exception:
             pass
     init_demo_state()
