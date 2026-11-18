@@ -12,8 +12,8 @@ def render() -> None:
 
     render_hero(
         title="Kelola Data Tersimpan",
-        subtitle=f"Tinjau rekapitulasi data kesiswaan per kelas yang tersimpan di basis data {school_name()}.",
-        badge_text=f"🗄️ Total Record: {len(df)} Baris",
+        subtitle=f"Manajemen penuh basis data historis kesiswaan {school_name()} (ekspor cadangan & penghapusan per tahun ajaran).",
+        badge_text=f"🛡️ Super Admin · {len(df)} Baris",
     )
 
     if df.empty:
@@ -22,7 +22,10 @@ def render() -> None:
 
     with st.container(border=True):
         st.markdown('<div class="chart-title">Daftar Rekapitulasi Per Kelas</div>', unsafe_allow_html=True)
-        st.markdown('<div class="chart-subtitle">Seluruh data historis yang aktif digunakan pada visualisasi dan pemodelan</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="chart-subtitle">Seluruh data historis yang aktif digunakan pada visualisasi dan pemodelan</div>',
+            unsafe_allow_html=True,
+        )
         display_df = per_class(df).drop(columns="mulai").rename(
             columns={
                 "tahun_ajaran": "Tahun Ajaran",
@@ -33,12 +36,22 @@ def render() -> None:
             }
         )
         st.dataframe(display_df, hide_index=True, use_container_width=True)
+        st.download_button(
+            "Unduh Cadangan Data (.csv)",
+            df.to_csv(index=False).encode("utf-8"),
+            "backup_data_siswa_mts_alfalahiyyah.csv",
+            "text/csv",
+            icon=":material/download:",
+        )
 
     st.markdown("<div style='height: 0.5rem;'></div>", unsafe_allow_html=True)
 
     with st.container(border=True):
         st.markdown('<div class="chart-title">Hapus Data Tahun Ajaran</div>', unsafe_allow_html=True)
-        st.markdown('<div class="chart-subtitle">Gunakan fitur ini untuk membersihkan data uji coba atau memperbarui tahun ajaran tertentu</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="chart-subtitle">Gunakan fitur ini untuk membersihkan data uji coba atau memperbarui tahun ajaran tertentu</div>',
+            unsafe_allow_html=True,
+        )
         c1, c2 = st.columns([1, 2])
         year = c1.selectbox("Pilih Tahun Ajaran", sorted(df["tahun_ajaran"].unique(), reverse=True))
         confirm = st.checkbox(f"Saya yakin ingin menghapus seluruh data kesiswaan tahun ajaran {year}")

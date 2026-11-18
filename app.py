@@ -27,18 +27,25 @@ pages = {
         st.Page("views/prediksi.py", title="Prediksi Siswa", icon=":material/trending_up:"),
     ]
 }
+
 if user.is_operator:
-    pages["Pengelolaan Data"] = [
+    pages["Administrasi Data (Super Admin)"] = [
         st.Page("views/unggah.py", title="Unggah Data", icon=":material/upload_file:"),
         st.Page("views/kelola.py", title="Kelola Data", icon=":material/table_rows:"),
     ]
 
+pages["Akun"] = [
+    st.Page("views/pengaturan.py", title="Pengaturan Akun", icon=":material/manage_accounts:"),
+]
+
 with st.sidebar:
+    badge_role = "🛡️ Operator (Super Admin)" if user.is_operator else "🎓 Kepala Sekolah"
     st.markdown(
         f"""
         <div class="sidebar-profile">
             <div class="sidebar-school">🏫 {school_name()}</div>
-            <div class="sidebar-role">👤 {user.nama} · <b>{user.role.capitalize()}</b></div>
+            <div class="sidebar-role">👤 {user.nama}</div>
+            <div class="sidebar-role" style="margin-top:4px; font-weight:600; color:#7DD3FC !important;">{badge_role}</div>
         </div>
         """,
         unsafe_allow_html=True,

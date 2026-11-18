@@ -5,7 +5,14 @@ import streamlit as st
 
 APP_TITLE = "Dashboard Analitik Kesiswaan"
 from core.constants import (  # noqa: F401
-    KELAS_VALID, MAX_HORIZON, MIN_POINTS, ROLE_OPERATOR, ROLE_PIMPINAN,
+    KELAS_VALID,
+    KEPALA_ROLES,
+    MAX_HORIZON,
+    MIN_POINTS,
+    ROLE_KEPALA_SEKOLAH,
+    ROLE_OPERATOR,
+    ROLE_PIMPINAN,
+    role_label,
 )
 
 
