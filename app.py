@@ -335,4 +335,73 @@ def page_admin(user, settings):
                         st.rerun()
         else:
             init_demo_state()
-            st.dataframe(pd.DataFrame([{"Email": k, "Nama": v["nama"], "Peran": v["
+            demo_data = [
+                {"Email": k, "Nama": v["nama"], "Peran": v["role"]} 
+                for k, v in st.session_state["demo_users"].items()
+            ]
+            st.dataframe(pd.DataFrame(demo_data), hide_index=True, use_container_width=True)
+            
+    with t2, st.container(key="card-set"), st.form("f_set"):
+        ui.card_head("Pengaturan madrasah", "Dipakai untuk menghitung kebutuhan rombel dan guru")
+        nama_m = st.text_input("Nama madrasah", value=settings.get("nama_madrasah", "MTs Al-Falahiyyah"))
+        wa = st.text_input("WhatsApp operator (628xxx)", value=settings.get("wa_operator", ""))
+        c1, c2 = st.columns(2)
+        kap = c1.number_input("Kapasitas siswa per rombel", 15, 45, int(settings.get("kapasitas_rombel", 32)))
+        ras = c2.number_input("Rasio siswa per guru", 10, 40, int(settings.get("rasio_guru_siswa", 20)))
+        if st.form_submit_button("Simpan pengaturan"):
+            for k, v in [("nama_madrasah", nama_m.strip()), ("wa_operator", "".join(c for c in wa if c.isdigit())), ("kapasitas_rombel", kap), ("rasio_guru_siswa", ras)]:
+                save_setting(k, str(v))
+            st.success("Pengaturan tersimpan.")
+            st.rerun()
+
+
+# ============================== RANGKA UTAMA ==============================
+def main():
+    if "user" not in st.session_state:
+        return render_login()
+    user = st.session_state["user"]
+    is_op = user["role"] == "operator"
+    settings = get_settings()
+    df = get_rekap_siswa_aktif()
+
+    pages = [("home", "Dashboard", ":material/dashboard:"), ("fc", "Proyeksi", ":material/trending_up:")]
+    pages += [("up", "Unggah Data", ":material/upload:"), ("adm", "Pengguna & Pengaturan", ":material/settings:")] if is_op else [("lap", "Laporan", ":material/description:")]
+    page = st.session_state.setdefault("page", "home")
+    if page not in [p[0] for p in pages]:
+        page = "home"
+
+    with st.sidebar:
+        st.markdown(f"<div class='logo'><i>🎓</i>{esc(settings.get('nama_madrasah', 'MTs Al-Falahiyyah'))}</div>", unsafe_allow_html=True)
+        for pid, label, icon in pages:
+            if st.button(label, icon=icon, key=f"nav-{'on' if page == pid else 'off'}-{pid}", use_container_width=True):
+                st.session_state["page"] = pid
+                st.rerun()
+        st.markdown("<div style='height:max(20px, calc(100vh - 720px))'></div>", unsafe_allow_html=True)
+        n = len(df)
+        segs = "".join("<i></i>" if k < n else "<i class='o'></i>" for k in range(max(10, n)))
+        st.markdown(f"<div class='sbcard'>Data tersimpan<small>{n} tahun ajaran</small><div class='seg' aria-hidden='true'>{segs}</div></div>"
+                    f"<div class='me'><span class='av'>{esc(user['nama'][:1].upper())}</span><div>{esc(user['nama'])}<small>{esc(user['jabatan'])}</small></div></div>", unsafe_allow_html=True)
+        if st.button("Keluar", icon=":material/logout:", key="logout", use_container_width=True):
+            sb = get_supabase()
+            if sb:
+                try:
+                    sb.auth.sign_out()
+                except Exception:
+                    pass
+            st.session_state.clear()
+            st.rerun()
+
+    if page == "home":
+        page_dashboard(df, settings, is_op, user["nama"])
+    elif page == "fc":
+        page_proyeksi(df, settings)
+    elif page == "up" and is_op:
+        page_unggah(user)
+    elif page == "adm" and is_op:
+        page_admin(user, settings)
+    elif page == "lap":
+        page_laporan(df, settings)
+
+
+if __name__ == "__main__":
+    main()
