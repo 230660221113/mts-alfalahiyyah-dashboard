@@ -153,16 +153,27 @@ def upsert_siswa_aktif_3nf(df_clean: pd.DataFrame, nama_file: str, user_id: str 
             })
         sb.table("master_kelas").upsert(kelas_records).execute()
 
-        # 3. Master Siswa (status_terkini = Aktif)
+        # 3. Master Siswa (status_terkini = Aktif) - Penanganan aman nilai kosong/NaT/NaN
         siswa_records = []
         for _, r in df_clean.drop_duplicates(subset=["nik"]).iterrows():
+            tgl = r.get("tanggal_lahir")
+            if pd.isna(tgl) or not str(tgl).strip() or str(tgl).lower() in ("nat", "nan", "none", ""):
+                tgl_val = None
+            else:
+                tgl_val = str(tgl).strip()[:10]
+                if len(tgl_val) != 10:  # Validasi panjang format tanggal YYYY-MM-DD
+                    tgl_val = None
+
+            nisn = r.get("nisn")
+            nisn_val = str(nisn).strip() if pd.notna(nisn) and str(nisn).strip() and str(nisn).lower() != "nan" else None
+
             siswa_records.append({
-                "nik": r["nik"],
-                "nisn": r["nisn"],
-                "nama_lengkap": r["nama_lengkap"],
-                "jenis_kelamin": r["jenis_kelamin"],
-                "tempat_lahir": r["tempat_lahir"],
-                "tanggal_lahir": r["tanggal_lahir"],
+                "nik": str(r["nik"]).strip(),
+                "nisn": nisn_val,
+                "nama_lengkap": str(r["nama_lengkap"]).strip(),
+                "jenis_kelamin": str(r["jenis_kelamin"]).strip(),
+                "tempat_lahir": str(r.get("tempat_lahir", "")).strip() if pd.notna(r.get("tempat_lahir")) else "",
+                "tanggal_lahir": tgl_val,
                 "status_terkini": "Aktif",
             })
         sb.table("master_siswa").upsert(siswa_records).execute()
@@ -211,11 +222,14 @@ def upsert_alumni_3nf(df_clean: pd.DataFrame, nama_file: str, user_id: str | Non
 
         siswa_records = []
         for _, r in df_clean.drop_duplicates(subset=["nik"]).iterrows():
+            nisn = r.get("nisn")
+            nisn_val = str(nisn).strip() if pd.notna(nisn) and str(nisn).strip() and str(nisn).lower() != "nan" else None
+            
             siswa_records.append({
-                "nik": r["nik"],
-                "nisn": r["nisn"],
-                "nama_lengkap": r["nama_lengkap"],
-                "jenis_kelamin": r["jenis_kelamin"],
+                "nik": str(r["nik"]).strip(),
+                "nisn": nisn_val,
+                "nama_lengkap": str(r["nama_lengkap"]).strip(),
+                "jenis_kelamin": str(r["jenis_kelamin"]).strip(),
                 "status_terkini": "Alumni",
             })
         sb.table("master_siswa").upsert(siswa_records).execute()
