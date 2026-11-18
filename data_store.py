@@ -18,13 +18,16 @@ def is_supabase_configured() -> bool:
         return False
 
 
-@st.cache_resource
 def get_supabase() -> "Client | None":
+    """Satu klien PER SESI pengguna (disimpan di session_state), bukan satu klien bersama.
+    Dengan begitu token login operator dan kepala sekolah tidak saling tertukar."""
     if not is_supabase_configured():
         return None
-    url = st.secrets.get("SUPABASE_URL", "") or os.getenv("SUPABASE_URL", "")
-    key = st.secrets.get("SUPABASE_KEY", "") or os.getenv("SUPABASE_KEY", "")
-    return create_client(url, key)
+    if "_sb" not in st.session_state:
+        url = st.secrets.get("SUPABASE_URL", "") or os.getenv("SUPABASE_URL", "")
+        key = st.secrets.get("SUPABASE_KEY", "") or os.getenv("SUPABASE_KEY", "")
+        st.session_state["_sb"] = create_client(url, key)
+    return st.session_state["_sb"]
 
 
 def init_demo_state():
@@ -91,16 +94,26 @@ def save_setting(kunci: str, nilai: str):
 
 def get_rekap_siswa_aktif() -> pd.DataFrame:
     sb = get_supabase()
-    if sb:
+    if sb:  # mode produksi: JANGAN jatuh ke data contoh kalau kosong
         try:
             res = sb.table("v_rekap_siswa_aktif").select("*").order("tahun_mulai").execute()
-            df = pd.DataFrame(res.data or [])
-            if not df.empty:
-                return df
+            return pd.DataFrame(res.data or [])
         except Exception:
-            pass
+            return pd.DataFrame()
     init_demo_state()
     return st.session_state["demo_rekap"].copy()
+
+
+def get_log_unggah(limit: int = 8) -> pd.DataFrame:
+    sb = get_supabase()
+    if sb:
+        try:
+            res = (sb.table("log_unggah_data").select("jenis_unggah, nama_file, jumlah_baris, created_at")
+                   .order("created_at", desc=True).limit(limit).execute())
+            return pd.DataFrame(res.data or [])
+        except Exception:
+            return pd.DataFrame()
+    return pd.DataFrame()
 
 
 def get_alumni_summary() -> tuple[int, pd.DataFrame]:

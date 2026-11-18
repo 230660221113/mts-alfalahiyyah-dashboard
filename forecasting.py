@@ -1,114 +1,84 @@
 import math
+
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
-from statsmodels.tsa.holtwinters import ExponentialSmoothing
+from sklearn.linear_model import LinearRegression
 from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
 
-def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
-    mae = float(np.mean(np.abs(y_true - y_pred)))
-    rmse = float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
-    nonzero = y_true != 0
-    mape = float(np.mean(np.abs((y_true[nonzero] - y_pred[nonzero]) / y_true[nonzero])) * 100) if np.any(nonzero) else 0.0
-    return {"MAE": round(mae, 2), "RMSE": round(rmse, 2), "MAPE": round(mape, 2)}
+def _lr(y, h):
+    m = LinearRegression().fit(np.arange(len(y)).reshape(-1, 1), y)
+    return m.predict(np.arange(len(y), len(y) + h).reshape(-1, 1))
+
+
+def _holt(y, h):
+    return ExponentialSmoothing(y, trend="add", damped_trend=True, initialization_method="estimated").fit().forecast(h)
+
+
+def _arima(y, h):
+    try:
+        return ARIMA(y, order=(1, 1, 0), trend="t").fit().forecast(h)  # dengan drift
+    except Exception:
+        return ARIMA(y, order=(1, 1, 0)).fit().forecast(h)
+
+
+def _rf(y, h):
+    """Random Forest pada SELISIH antar-tahun, supaya bisa melampaui rentang data."""
+    d = np.diff(y)
+    m = RandomForestRegressor(n_estimators=200, random_state=42).fit(d[:-1].reshape(-1, 1), d[1:])
+    last, ld, out = float(y[-1]), float(d[-1]), []
+    for _ in range(h):
+        ld = float(m.predict([[ld]])[0])
+        last += ld
+        out.append(last)
+    return np.array(out)
+
+
+MODELS = {"Regresi Linier": _lr, "Holt Exponential Smoothing": _holt, "ARIMA": _arima, "Random Forest": _rf}
+
+
+def backtest(y: np.ndarray) -> pd.DataFrame:
+    """Uji satu langkah ke depan pada beberapa tahun terakhir (expanding window).
+    Galat dihitung pada data yang TIDAK dipakai melatih, bukan pada data latih."""
+    n = len(y)
+    k = min(3, n - 4)
+    rows = []
+    for name, fn in MODELS.items():
+        try:
+            e = np.array([y[t] - float(fn(y[:t], 1)[0]) for t in range(n - k, n)])
+        except Exception:
+            continue
+        a = y[n - k:]
+        rows.append({"Algoritma": name, "MAE": round(float(np.mean(abs(e))), 2),
+                     "RMSE": round(float(np.sqrt(np.mean(e**2))), 2),
+                     "MAPE": round(float(np.mean(abs(e / a)) * 100), 2)})
+    return pd.DataFrame(rows).sort_values(["RMSE", "MAPE"]).reset_index(drop=True)
 
 
 def run_auto_forecast(df_hist: pd.DataFrame, horizon: int = 2, kapasitas_rombel: int = 32, rasio_guru: int = 20) -> dict:
-    """
-    Menjalankan 4 algoritma peramalan (Linear Regression, Holt Exponential Smoothing,
-    ARIMA, dan Random Forest) di belakang layar, mengevaluasi galatnya (MAPE/RMSE),
-    dan secara otomatis memilih model terbaik untuk disajikan ke Operator & Kepala Sekolah.
-    """
+    """Menjalankan empat model di belakang layar, memilih yang galat ujinya terkecil,
+    lalu menyusun proyeksi + kebutuhan rombel dan guru. Minimal 6 tahun ajaran."""
     df = df_hist.sort_values("tahun_mulai").reset_index(drop=True)
     y = df["total_aktif"].astype(float).values
-    n = len(y)
-    X = np.arange(n).reshape(-1, 1)
-    X_future = np.arange(n, n + horizon).reshape(-1, 1)
+    ev = backtest(y)
+    best = ev.iloc[0]["Algoritma"] if not ev.empty else "Regresi Linier"
+    pred = np.maximum(np.round(np.asarray(MODELS[best](y, horizon))), 0).astype(int)
 
-    candidates = {}
-
-    # 1. Regresi Linier
-    lr = LinearRegression().fit(X, y)
-    candidates["Regresi Linier"] = (lr.predict(X), lr.predict(X_future))
-
-    # 2. Holt's Exponential Smoothing
-    try:
-        holt = ExponentialSmoothing(y, trend="add", damped_trend=True).fit()
-        candidates["Holt Exponential Smoothing"] = (holt.fittedvalues, holt.forecast(horizon))
-    except Exception:
-        pass
-
-    # 3. ARIMA(1,1,0)
-    try:
-        arima = ARIMA(y, order=(1, 1, 0)).fit()
-        candidates["ARIMA"] = (arima.fittedvalues, arima.forecast(horizon))
-    except Exception:
-        pass
-
-    # 4. Random Forest Regressor
-    try:
-        rf = RandomForestRegressor(n_estimators=100, random_state=42).fit(X, y)
-        candidates["Random Forest"] = (rf.predict(X), rf.predict(X_future))
-    except Exception:
-        pass
-
-    eval_table = []
-    best_name = "Regresi Linier"
-    best_score = float("inf")
-
-    for name, (fit_vals, fut_vals) in candidates.items():
-        m = _metrics(y, np.asarray(fit_vals))
-        eval_table.append({"Algoritma": name, **m})
-        # Skor gabungan MAPE & RMSE untuk pemilihan otomatis di latar belakang
-        score = m["MAPE"] + (m["RMSE"] * 0.1)
-        if score < best_score:
-            best_score = score
-            best_name = name
-
-    _, best_future = candidates[best_name]
-    best_future = np.maximum(np.round(best_future), 0).astype(int)
-
-    # Susun tabel proyeksi per tahun ajaran mendatang + kebutuhan rombel & guru
-    last_start = int(df["tahun_mulai"].iloc[-1])
-    last_total = int(df["total_aktif"].iloc[-1])
-
-    # Proporsi historis rata-rata per tingkat (VII, VIII, IX) untuk estimasi distribusi kelas
-    p_vii = float((df["kelas_vii"] / df["total_aktif"].replace(0, np.nan)).mean())
-    p_viii = float((df["kelas_viii"] / df["total_aktif"].replace(0, np.nan)).mean())
+    last_start, prev = int(df["tahun_mulai"].iloc[-1]), int(df["total_aktif"].iloc[-1])
+    tot = df["total_aktif"].replace(0, np.nan)
+    p_vii, p_viii = float((df["kelas_vii"] / tot).mean()), float((df["kelas_viii"] / tot).mean())
     if np.isnan(p_vii) or np.isnan(p_viii):
         p_vii, p_viii = 0.35, 0.33
 
-    proj_rows = []
-    prev_val = last_total
-    for step in range(1, horizon + 1):
-        s_yr = last_start + step
-        e_yr = s_yr + 1
-        ta_label = f"{s_yr}/{e_yr}"
-        pred_total = int(best_future[step - 1])
-        est_vii = int(round(pred_total * p_vii))
-        est_viii = int(round(pred_total * p_viii))
-        est_ix = max(pred_total - est_vii - est_viii, 0)
-
-        rombel_butuh = max(math.ceil(pred_total / kapasitas_rombel), 3)
-        guru_butuh = max(math.ceil(pred_total / rasio_guru), 6)
-        delta = pred_total - prev_val
-        prev_val = pred_total
-
-        proj_rows.append({
-            "Tahun_Ajaran": ta_label,
-            "Proyeksi_Siswa_Aktif": pred_total,
-            "Est_Kelas_VII": est_vii,
-            "Est_Kelas_VIII": est_viii,
-            "Est_Kelas_IX": est_ix,
-            "Perubahan": f"{delta:+d} siswa",
-            "Kebutuhan_Rombel": rombel_butuh,
-            "Kebutuhan_Guru": guru_butuh,
-        })
-
-    return {
-        "best_model": best_name,
-        "eval_df": pd.DataFrame(eval_table).sort_values("MAPE"),
-        "forecast_df": pd.DataFrame(proj_rows),
-    }
+    rows = []
+    for i, total in enumerate(pred, start=1):
+        total = int(total)
+        vii, viii = int(round(total * p_vii)), int(round(total * p_viii))
+        rows.append({"Tahun_Ajaran": f"{last_start + i}/{last_start + i + 1}", "Proyeksi_Siswa_Aktif": total,
+                     "Est_Kelas_VII": vii, "Est_Kelas_VIII": viii, "Est_Kelas_IX": max(total - vii - viii, 0),
+                     "Selisih": total - prev, "Kebutuhan_Rombel": max(math.ceil(total / kapasitas_rombel), 3),
+                     "Kebutuhan_Guru": max(math.ceil(total / rasio_guru), 6)})
+        prev = total
+    return {"best_model": best, "eval_df": ev, "forecast_df": pd.DataFrame(rows)}

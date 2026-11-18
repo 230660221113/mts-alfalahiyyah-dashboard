@@ -1,495 +1,345 @@
+import html
+import io
 import os
 import urllib.parse
+
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 
+import charts
+import ui
 from data_store import (
-    get_alumni_summary,
-    get_rekap_siswa_aktif,
-    get_settings,
-    get_supabase,
-    init_demo_state,
-    is_supabase_configured,
-    save_setting,
-    upsert_alumni_3nf,
-    upsert_siswa_aktif_3nf,
+    get_alumni_summary, get_log_unggah, get_rekap_siswa_aktif, get_settings, get_supabase,
+    init_demo_state, is_supabase_configured, save_setting, upsert_alumni_3nf, upsert_siswa_aktif_3nf,
 )
 from forecasting import run_auto_forecast
 from validation import validate_alumni_df, validate_siswa_aktif_df
 
-st.set_page_config(
-    page_title="Sistem Analitik & Proyeksi Siswa — MTs Al-Falahiyyah",
-    page_icon="🎓",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# Gaya antarmuka bersih, profesional, kontras tinggi, dan mudah dipahami
-st.markdown(
-    """
-    <style>
-    .block-container { padding-top: 1.5rem; padding-bottom: 2rem; }
-    .kpi-card {
-        background: #FFFFFF;
-        border: 1px solid #E2E8F0;
-        border-left: 4px solid #0F2942;
-        border-radius: 10px;
-        padding: 1rem 1.2rem;
-        box-shadow: 0 1px 3px rgba(15,41,66,0.06);
-    }
-    .kpi-label { font-size: 0.85rem; color: #475569; font-weight: 600; margin-bottom: 0.25rem; }
-    .kpi-value { font-size: 1.75rem; color: #0F2942; font-weight: 700; line-height: 1.2; }
-    .kpi-sub { font-size: 0.8rem; color: #64748B; margin-top: 0.25rem; }
-    .wa-badge {
-        display: inline-block;
-        background-color: #16A34A;
-        color: #FFFFFF !important;
-        padding: 0.55rem 1.1rem;
-        border-radius: 8px;
-        text-decoration: none;
-        font-weight: 600;
-        font-size: 0.92rem;
-        margin-top: 0.4rem;
-    }
-    .wa-badge:hover { background-color: #15803D; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+MIN_TAHUN = 6
+esc = html.escape
+st.set_page_config(page_title="Dashboard Kesiswaan — MTs Al-Falahiyyah", page_icon="🎓", layout="wide")
+st.markdown(ui.CSS, unsafe_allow_html=True)
 
 
-def _get_template_bytes(filename: str) -> bytes:
-    path = os.path.join(os.path.dirname(__file__), "templates", filename)
-    with open(path, "rb") as f:
+def template_bytes(name: str) -> bytes:
+    with open(os.path.join(os.path.dirname(__file__), "templates", name), "rb") as f:
         return f.read()
 
 
-def render_login():
-    settings = get_settings()
-    madrasah = settings.get("nama_madrasah", "MTs Al-Falahiyyah")
-    wa_operator = "".join(ch for ch in settings.get("wa_operator", "6281234567890") if ch.isdigit())
-
-    _, center, _ = st.columns([1.1, 1.3, 1.1])
-    with center:
-        st.markdown(f"## 🎓 {madrasah}")
-        st.caption("Sistem Informasi Analitik & Proyeksi Jumlah Peserta Didik")
-
-        tab_masuk, tab_lupa = st.tabs(["🔑 Masuk Sistem", "💬 Lupa Kata Sandi"])
-
-        with tab_masuk:
-            with st.form("form_login", clear_on_submit=False):
-                email = st.text_input("Email Pengguna", placeholder="contoh: operator@alfalahiyyah.sch.id")
-                password = st.text_input("Kata Sandi", type="password", placeholder="Masukkan kata sandi")
-                submit = st.form_submit_button("Masuk ke Dashboard", use_container_width=True, type="primary")
-
-            if submit:
-                email_clean = email.strip().lower()
-                if not email_clean or not password:
-                    st.error("Harap isi email dan kata sandi.")
-                    return
-
-                sb = get_supabase()
-                if sb:
-                    try:
-                        auth_res = sb.auth.sign_in_with_password({"email": email_clean, "password": password})
-                        uid = auth_res.user.id
-                        prof_res = sb.table("profiles").select("*").eq("id", uid).single().execute()
-                        prof = prof_res.data
-                        if not prof or not prof.get("aktif", True):
-                            st.error("Akun tidak aktif atau profil peran belum diatur oleh Operator.")
-                            return
-                        st.session_state["user"] = {
-                            "id": uid,
-                            "email": email_clean,
-                            "nama": prof.get("nama") or email_clean,
-                            "jabatan": prof.get("jabatan") or "Staf Madrasah",
-                            "role": prof.get("role", "kepala_sekolah"),
-                        }
-                        st.rerun()
-                    except Exception:
-                        st.error("Email atau kata sandi salah, atau akun belum dikonfirmasi oleh Operator.")
-                else:
-                    init_demo_state()
-                    users = st.session_state["demo_users"]
-                    u = users.get(email_clean)
-                    if u and u["password"] == password and u.get("aktif", True):
-                        st.session_state["user"] = {
-                            "id": "demo-user",
-                            "email": email_clean,
-                            "nama": u["nama"],
-                            "jabatan": u["jabatan"],
-                            "role": u["role"],
-                        }
-                        st.rerun()
-                    else:
-                        st.error("Email atau kata sandi tidak sesuai.")
-
-        with tab_lupa:
-            st.info(
-                "**Lupa Kata Sandi?**\n\n"
-                "Demi keamanan data madrasah, pengaturan ulang (*reset*) kata sandi dilakukan langsung "
-                "oleh **Operator Madrasah (Super Admin)**. Klik tombol di bawah untuk menghubungi Operator via WhatsApp:"
-            )
-            pesan_wa = urllib.parse.quote(
-                f"Assalamu'alaikum Operator {madrasah}, saya lupa kata sandi akun Dashboard Siswa. Mohon bantuan untuk reset kata sandi saya."
-            )
-            wa_url = f"https://wa.me/{wa_operator}?text={pesan_wa}"
-            st.markdown(
-                f'<a class="wa-badge" href="{wa_url}" target="_blank">📲 Hubungi Operator via WhatsApp</a>',
-                unsafe_allow_html=True,
-            )
+@st.cache_data(show_spinner=False)
+def forecast(df_json: str, h: int, kap: int, rasio: int) -> dict:
+    return run_auto_forecast(pd.read_json(io.StringIO(df_json)), h, kap, rasio)
 
 
-def render_dashboard_overview(df_rekap: pd.DataFrame, total_alumni: int, settings: dict):
-    st.subheader("📊 Ringkasan Kondisi Peserta Didik")
-
-    latest = df_rekap.iloc[-1]
-    prev = df_rekap.iloc[-2] if len(df_rekap) > 1 else latest
-    diff_aktif = int(latest["total_aktif"] - prev["total_aktif"])
-    kapasitas = int(settings.get("kapasitas_rombel", 32))
-    rombel_saat_ini = max(int(-(-latest["total_aktif"] // kapasitas)), 3)
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown(
-            f'<div class="kpi-card"><div class="kpi-label">Siswa Aktif ({latest["tahun_ajaran"]})</div>'
-            f'<div class="kpi-value">{int(latest["total_aktif"])}</div>'
-            f'<div class="kpi-sub">{diff_aktif:+d} dari tahun ajaran lalu</div></div>',
-            unsafe_allow_html=True,
-        )
-    with c2:
-        st.markdown(
-            f'<div class="kpi-card"><div class="kpi-label">Komposisi Kelas Aktif</div>'
-            f'<div class="kpi-value">VII: {int(latest["kelas_vii"])} | VIII: {int(latest["kelas_viii"])} | IX: {int(latest["kelas_ix"])}</div>'
-            f'<div class="kpi-sub">Tercatat aktif di EMIS</div></div>',
-            unsafe_allow_html=True,
-        )
-    with c3:
-        st.markdown(
-            f'<div class="kpi-card"><div class="kpi-label">Kebutuhan Rombel Saat Ini</div>'
-            f'<div class="kpi-value">{rombel_saat_ini} Kelas</div>'
-            f'<div class="kpi-sub">Kapasitas {kapasitas} siswa/rombel</div></div>',
-            unsafe_allow_html=True,
-        )
-    with c4:
-        st.markdown(
-            f'<div class="kpi-card"><div class="kpi-label">Total Alumni Terdata</div>'
-            f'<div class="kpi-value">{total_alumni}</div>'
-            f'<div class="kpi-sub">Terpisah dari hitungan siswa aktif</div></div>',
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("#### Tren Jumlah Siswa Aktif per Tahun Ajaran")
-    fig = go.Figure()
-    fig.add_trace(go.Bar(name="Kelas VII", x=df_rekap["tahun_ajaran"], y=df_rekap["kelas_vii"], marker_color="#1D4ED8"))
-    fig.add_trace(go.Bar(name="Kelas VIII", x=df_rekap["tahun_ajaran"], y=df_rekap["kelas_viii"], marker_color="#0EA5E9"))
-    fig.add_trace(go.Bar(name="Kelas IX", x=df_rekap["tahun_ajaran"], y=df_rekap["kelas_ix"], marker_color="#38BDF8"))
-    fig.add_trace(
-        go.Scatter(
-            name="Total Siswa Aktif",
-            x=df_rekap["tahun_ajaran"],
-            y=df_rekap["total_aktif"],
-            mode="lines+markers+text",
-            text=df_rekap["total_aktif"],
-            textposition="top center",
-            line=dict(color="#0F2942", width=3),
-        )
-    )
-    fig.update_layout(
-        barmode="stack",
-        height=390,
-        margin=dict(l=20, r=20, t=30, b=20),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        yaxis_title="Jumlah Siswa",
-        xaxis_title="Tahun Ajaran",
-        plot_bgcolor="#FFFFFF",
-    )
-    st.plotly_chart(fig, use_container_width=True)
+# ============================== LOGIN ==============================
+HERO = f"""<div class='hero'>
+  <div style='font-weight:800'>🎓 MTs Al-Falahiyyah</div>
+  <div>
+    <div class='mini'><div class='l'>Peserta didik</div><div class='n'>Tren per tahun ajaran</div>{charts.sparkline([3, 4, 4, 6, 7, 9, 8, 11], "#1F7A5C")}</div>
+    <div class='mini b'><div class='l'>Prediksi</div><div class='n'>Tahun ajaran berikutnya</div>{charts.sparkline([3, 4, 5, 5, 7, 8, 10, 12], "#7FB84E")}</div>
+  </div>
+  <div><h2>Pantau dan prediksi jumlah peserta didik dalam satu dashboard</h2>
+  <p>Rencanakan kelas dan guru untuk tahun ajaran berikutnya.</p></div></div>"""
 
 
-def render_prediksi(df_rekap: pd.DataFrame, settings: dict):
-    st.subheader("📈 Proyeksi Siswa & Kebutuhan Kelas / Guru")
-
-    col_ctrl, _ = st.columns([1.4, 2.6])
-    with col_ctrl:
-        horizon = st.selectbox(
-            "Pilih Rentang Proyeksi Tahun Ajaran Mendatang",
-            options=[1, 2, 3],
-            index=1,
-            format_func=lambda x: f"{x} Tahun Ajaran Mendatang",
-        )
-
-    kapasitas = int(settings.get("kapasitas_rombel", 32))
-    rasio_guru = int(settings.get("rasio_guru_siswa", 20))
-    res = run_auto_forecast(df_rekap, horizon=horizon, kapasitas_rombel=kapasitas, rasio_guru=rasio_guru)
-    df_fc = res["forecast_df"]
-
-    # Grafik gabungan historis + proyeksi yang bersih & langsung terbaca
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            name="Data Historis (Siswa Aktif)",
-            x=df_rekap["tahun_ajaran"],
-            y=df_rekap["total_aktif"],
-            mode="lines+markers+text",
-            text=df_rekap["total_aktif"],
-            textposition="top center",
-            line=dict(color="#0F2942", width=3),
-            marker=dict(size=8),
-        )
-    )
-
-    bridge_x = [df_rekap["tahun_ajaran"].iloc[-1]] + df_fc["Tahun_Ajaran"].tolist()
-    bridge_y = [int(df_rekap["total_aktif"].iloc[-1])] + df_fc["Proyeksi_Siswa_Aktif"].tolist()
-    bridge_txt = [""] + [str(v) for v in df_fc["Proyeksi_Siswa_Aktif"].tolist()]
-
-    fig.add_trace(
-        go.Scatter(
-            name="Proyeksi Mendatang",
-            x=bridge_x,
-            y=bridge_y,
-            mode="lines+markers+text",
-            text=bridge_txt,
-            textposition="top center",
-            line=dict(color="#D97706", width=3, dash="dash"),
-            marker=dict(size=9, symbol="diamond"),
-        )
-    )
-    fig.update_layout(
-        height=380,
-        margin=dict(l=20, r=20, t=30, b=20),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        yaxis_title="Jumlah Siswa Aktif",
-        xaxis_title="Tahun Ajaran",
-        plot_bgcolor="#FFFFFF",
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("#### Estimasi Kebutuhan Ruang Kelas & Tenaga Pendidik")
-    st.dataframe(
-        df_fc.rename(
-            columns={
-                "Tahun_Ajaran": "Tahun Ajaran",
-                "Proyeksi_Siswa_Aktif": "Proyeksi Siswa Aktif",
-                "Est_Kelas_VII": "Est. Kelas VII",
-                "Est_Kelas_VIII": "Est. Kelas VIII",
-                "Est_Kelas_IX": "Est. Kelas IX",
-                "Perubahan": "Selisih",
-                "Kebutuhan_Rombel": "Kebutuhan Ruang Kelas (Rombel)",
-                "Kebutuhan_Guru": "Estimasi Kebutuhan Guru",
-            }
-        ),
-        use_container_width=True,
-        hide_index=True,
-    )
-
-
-def render_unggah_data(user: dict):
-    st.subheader("📥 Unggah & Validasi Data EMIS (Siswa Aktif & Alumni)")
-
-    # 1. Dua tombol unduh templat resmi sesuai Excel berjalan di madrasah
-    st.markdown("#### 1. Unduh Templat Excel Resmi")
-    c_t1, c_t2 = st.columns(2)
-    with c_t1:
-        st.download_button(
-            label="⬇️ Unduh Templat Data Siswa Aktif (.xlsx)",
-            data=_get_template_bytes("Template_Data_Siswa_Aktif.xlsx"),
-            file_name="Template_Data_Siswa_Aktif.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-    with c_t2:
-        st.download_button(
-            label="⬇️ Unduh Templat Data Alumni (.xlsx)",
-            data=_get_template_bytes("Template_Data_Alumni.xlsx"),
-            file_name="Template_Data_Alumni.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-
-    st.divider()
-    st.markdown("#### 2. Unggah Berkas Excel Terisi")
-    tab_aktif, tab_alumni = st.tabs(["👨‍🎓 Unggah Data Siswa Aktif", "🎓 Unggah Data Alumni (Lulusan)"])
-
-    with tab_aktif:
-        up_aktif = st.file_uploader(
-            "Pilih file Excel Data Siswa Aktif (.xlsx)", type=["xlsx"], key="up_siswa_aktif"
-        )
-        if up_aktif is not None:
-            df_raw = pd.read_excel(up_aktif, dtype=str)
-            is_valid, warnings, df_clean = validate_siswa_aktif_df(df_raw)
-            if not is_valid:
-                st.error(f"Ditemukan {len(warnings)} ketidaksesuaian format data. Perbaiki baris berikut sebelum menyimpan:")
-                for w in warnings[:25]:
-                    st.warning(w)
-            else:
-                st.success(f"Validasi berhasil: {len(df_clean)} data siswa aktif siap disimpan (NIK & NISN bersih).")
-                st.dataframe(df_clean.head(15), use_container_width=True, hide_index=True)
-                if st.button("💾 Simpan Data Siswa Aktif ke Database", type="primary", key="btn_save_aktif"):
-                    upsert_siswa_aktif_3nf(df_clean, up_aktif.name, user.get("id"))
-                    st.success("Data siswa aktif berhasil tersimpan dan grafik proyeksi telah diperbarui.")
-                    st.rerun()
-
-    with tab_alumni:
-        up_alumni = st.file_uploader(
-            "Pilih file Excel Data Alumni (.xlsx)", type=["xlsx"], key="up_alumni"
-        )
-        if up_alumni is not None:
-            df_raw_al = pd.read_excel(up_alumni, dtype=str)
-            is_valid_al, warnings_al, df_clean_al = validate_alumni_df(df_raw_al)
-            if not is_valid_al:
-                st.error(f"Ditemukan {len(warnings_al)} ketidaksesuaian pada data Alumni:")
-                for w in warnings_al[:25]:
-                    st.warning(w)
-            else:
-                st.success(
-                    f"Validasi berhasil: {len(df_clean_al)} data alumni valid. "
-                    "Siswa pada daftar ini akan otomatis dipisahkan dari hitungan siswa aktif."
-                )
-                st.dataframe(df_clean_al.head(15), use_container_width=True, hide_index=True)
-                if st.button("💾 Simpan Data Alumni ke Database", type="primary", key="btn_save_alumni"):
-                    upsert_alumni_3nf(df_clean_al, up_alumni.name, user.get("id"))
-                    st.success("Data alumni berhasil tersimpan dan status siswa diperbarui.")
-                    st.rerun()
-
-
-def render_manajemen_akun(user: dict, settings: dict):
-    st.subheader("⚙️ Manajemen Pengguna & Pengaturan Madrasah")
+def do_login(email: str, password: str):
+    email = email.strip().lower()
+    if not email or not password:
+        st.error("Isi email dan kata sandi.")
+        return
     sb = get_supabase()
+    if not sb:  # mode demo (tanpa Supabase)
+        init_demo_state()
+        u = st.session_state["demo_users"].get(email)
+        if u and u["password"] == password and u.get("aktif", True):
+            st.session_state["user"] = {"id": "demo-user", "email": email, "nama": u["nama"], "jabatan": u["jabatan"], "role": u["role"]}
+            st.rerun()
+        st.error("Email atau kata sandi tidak sesuai.")
+        return
+    try:
+        uid = sb.auth.sign_in_with_password({"email": email, "password": password}).user.id
+    except Exception:
+        st.error("Email atau kata sandi tidak sesuai.")
+        return
+    try:
+        prof = sb.table("profiles").select("*").eq("id", uid).single().execute().data
+    except Exception:
+        prof = None
+    if not prof or not prof.get("aktif", True):
+        sb.auth.sign_out()
+        st.error("Akun belum aktif atau profilnya belum diatur. Hubungi operator.")
+        return
+    st.session_state["user"] = {"id": uid, "email": email, "nama": prof.get("nama") or email,
+                                "jabatan": prof.get("jabatan") or "Staf Madrasah", "role": prof.get("role", "kepala_sekolah")}
+    st.rerun()
 
-    tab_pengguna, tab_madrasah = st.tabs(["👥 Kelola Akun Kepala Sekolah & Reset Sandi", "🏫 Pengaturan Madrasah & Kontak WA"])
 
-    with tab_pengguna:
-        st.markdown("#### Daftar Pengguna Sistem")
+def render_login():
+    s = get_settings()
+    wa = "".join(ch for ch in s.get("wa_operator", "") if ch.isdigit())
+    pesan = urllib.parse.quote(f"Assalamu'alaikum Operator {s.get('nama_madrasah', 'MTs Al-Falahiyyah')}, saya lupa kata sandi akun dashboard. Mohon bantuan reset.")
+    left, right = st.columns([1, 1.1], gap="large")
+    with left:
+        st.markdown("<div style='height:14vh'></div><div class='login-title'>Selamat datang</div>"
+                    "<div class='login-sub'>Masuk untuk melihat dashboard kesiswaan.</div>", unsafe_allow_html=True)
+        with st.form("login"):
+            email = st.text_input("Email", placeholder="nama@alfalahiyyah.sch.id")
+            pw = st.text_input("Kata sandi", type="password", placeholder="Masukkan kata sandi")
+            ok = st.form_submit_button("Masuk", use_container_width=True)
+        if ok:
+            do_login(email, pw)
+        if wa:
+            st.markdown(f"<div class='login-sub' style='margin-top:12px'>Lupa kata sandi? <a href='https://wa.me/{wa}?text={pesan}' target='_blank'>Hubungi operator via WhatsApp</a></div>", unsafe_allow_html=True)
+        if not is_supabase_configured():
+            st.markdown("<div class='demo-hint'><b>Mode demo</b><br>operator@alfalahiyyah.sch.id / operator123<br>kepsek@alfalahiyyah.sch.id / kepsek123</div>", unsafe_allow_html=True)
+    with right:
+        st.markdown(HERO, unsafe_allow_html=True)
+
+
+# ============================== HALAMAN ==============================
+def empty_state(is_op: bool):
+    with st.container(key="card-kosong"):
+        ui.card_head("Belum ada data peserta didik",
+                     "Unggah Data Siswa Aktif lewat menu Unggah Data." if is_op else "Data belum tersedia. Hubungi operator madrasah.")
+
+
+def page_dashboard(df, settings, is_op, nama):
+    demo = not is_supabase_configured()
+    ui.header("Dashboard", demo)
+    if df.empty:
+        return empty_state(is_op)
+    kap, rasio = int(settings.get("kapasitas_rombel", 32)), int(settings.get("rasio_guru_siswa", 20))
+    years, vals = list(df["tahun_ajaran"]), [int(v) for v in df["total_aktif"]]
+    total, prev = vals[-1], (vals[-2] if len(vals) > 1 else vals[-1])
+    diff, pct = total - prev, (total - prev) / prev * 100 if prev else 0
+    can = len(df) >= MIN_TAHUN
+    foot, cls = ui.delta_foot(diff, pct)
+    c1 = ui.stat(ui.I_TREND, "#E3F5EA", "#1F7A5C", ui.fmt(total), f"Siswa aktif {years[-1]}", foot, cls)
+
+    if is_op:
+        n_alumni, _ = get_alumni_summary()
+        log = get_log_unggah()
+        if log.empty:
+            upd = "Belum ada unggahan"
+        else:
+            t = pd.to_datetime(log.iloc[0]["created_at"], utc=True).tz_convert("Asia/Jakarta")
+            upd = f"{t.day} {ui.BULAN[t.month - 1][:3]} {t.year}"
+        cards = [c1, ui.stat(ui.I_CAP, "#E1EFF5", "#25708F", ui.fmt(n_alumni), "Alumni terdata", "<span>Terpisah dari siswa aktif</span>"),
+                 ui.stat(ui.I_CLOCK, "#EAF6D9", "#4E8A1F", f"{len(df)} tahun", "Tahun ajaran tercatat",
+                         f"<span>Pembaruan terakhir: {upd}</span>")]
+        sub = "Pantau kelengkapan data dan perkembangan peserta didik."
+    else:
+        if can:
+            f = forecast(df.to_json(), 1, kap, rasio)["forecast_df"].iloc[0]
+            c2 = ui.stat(ui.I_SPARK, "#EAF6D9", "#4E8A1F", ui.fmt(f["Proyeksi_Siswa_Aktif"]), f"Prediksi {f['Tahun_Ajaran']}", f"<span>{int(f['Selisih']):+d} dari tahun ini</span>")
+            c3 = ui.stat(ui.I_BUILD, "#E1EFF5", "#25708F", f"{int(f['Kebutuhan_Rombel'])} rombel", f"Kebutuhan {f['Tahun_Ajaran']}", f"<span>± {int(f['Kebutuhan_Guru'])} guru</span>")
+        else:
+            c2 = ui.stat(ui.I_SPARK, "#EAF6D9", "#4E8A1F", "–", "Prediksi tahun depan", f"<span>Butuh min. {MIN_TAHUN} tahun ajaran data</span>")
+            c3 = ui.stat(ui.I_BUILD, "#E1EFF5", "#25708F", "–", "Kebutuhan rombel", "<span>Menunggu data</span>")
+        cards = [c1, c2, c3]
+        sub = "Lihat perkiraan jumlah siswa, kelas, dan guru untuk tahun ajaran berikutnya."
+
+    with st.container(key="hero"):
+        left, right = st.columns([1.55, 1], gap="medium")
+        with left:
+            st.markdown(f"<div class='hl'><h2>Selamat {ui.sapa()}, {esc(nama)}!</h2><p>{sub}</p></div><div class='stats'>{''.join(cards)}</div>", unsafe_allow_html=True)
+        with right:
+            with st.container(key="card-chart"):
+                ui.card_head("Perkembangan Siswa", f"{len(df)} tahun ajaran" + (" dan proyeksi" if can else ""))
+                fy = fv = None
+                if can:
+                    h = ui.seg("hz")
+                    fd = forecast(df.to_json(), h, kap, rasio)["forecast_df"]
+                    fy, fv = list(fd["Tahun_Ajaran"]), list(fd["Proyeksi_Siswa_Aktif"])
+                    st.markdown("<div class='lg'><span><i></i>Aktual</span><span><i class='f'></i>Prediksi</span></div>", unsafe_allow_html=True)
+                st.plotly_chart(charts.bar_chart(years, vals, fy, fv), use_container_width=True, theme=None)
+    if not can:
+        st.info(f"Peramalan aktif setelah minimal {MIN_TAHUN} tahun ajaran data. Saat ini baru {len(df)}.")
+
+    if is_op:
+        st.markdown("<div class='th'><h3>Riwayat Unggah Data</h3></div>", unsafe_allow_html=True)
+        with st.container(key="card-hist"):
+            if log.empty:
+                st.markdown("<div class='note' style='padding:16px'>Belum ada unggahan.</div>", unsafe_allow_html=True)
+            else:
+                t = pd.to_datetime(log["created_at"], utc=True).dt.tz_convert("Asia/Jakarta")
+                rows = "".join(f"<tr><td><div class='fn'><i>{ui.I_FILE}</i>{esc(str(r.nama_file))}</div></td><td>{esc(str(r.jenis_unggah))}</td>"
+                               f"<td>{int(r.jumlah_baris)}</td><td>{x.day} {ui.BULAN[x.month - 1][:3]} {x.year}, {x:%H.%M}</td></tr>" for r, x in zip(log.itertuples(), t))
+                st.markdown(f"<table class='tbl left'><thead><tr><th>Nama berkas</th><th>Jenis</th><th>Baris</th><th>Waktu (WIB)</th></tr></thead><tbody>{rows}</tbody></table>", unsafe_allow_html=True)
+    else:
+        st.markdown("<div class='th'><h3>Rekap per Tahun Ajaran</h3></div>", unsafe_allow_html=True)
+        with st.container(key="card-hist"):
+            rk = pd.DataFrame({"Tahun ajaran": df["tahun_ajaran"], "Kelas VII": df["kelas_vii"].astype(int), "Kelas VIII": df["kelas_viii"].astype(int),
+                               "Kelas IX": df["kelas_ix"].astype(int), "Total": df["total_aktif"].astype(int)})
+            rk["Perubahan"] = rk["Total"].pct_change().mul(100)
+            st.markdown(ui.table(rk.iloc[::-1], delta="Perubahan"), unsafe_allow_html=True)
+
+
+def page_proyeksi(df, settings):
+    ui.header("Proyeksi", not is_supabase_configured())
+    if df.empty or len(df) < MIN_TAHUN:
+        with st.container(key="card-kosong"):
+            ui.card_head("Data belum cukup", f"Proyeksi membutuhkan minimal {MIN_TAHUN} tahun ajaran. Saat ini tercatat {len(df)}.")
+        return
+    kap, rasio = int(settings.get("kapasitas_rombel", 32)), int(settings.get("rasio_guru_siswa", 20))
+    years, vals = list(df["tahun_ajaran"]), [int(v) for v in df["total_aktif"]]
+    with st.container(key="card-fc"):
+        ui.card_head("Perkiraan jumlah peserta didik", "Pilih berapa tahun ajaran ke depan")
+        h = ui.seg("hz-p", 2)
+        fd = forecast(df.to_json(), h, kap, rasio)["forecast_df"]
+        st.plotly_chart(charts.trend_chart(years, vals, list(fd["Tahun_Ajaran"]), list(fd["Proyeksi_Siswa_Aktif"])), use_container_width=True, theme=None)
+        z = fd.iloc[-1]
+        st.markdown(f"<div class='note'>Tahun ajaran <b>{z['Tahun_Ajaran']}</b> diperkirakan <b>{int(z['Proyeksi_Siswa_Aktif'])} siswa</b>, "
+                    f"membutuhkan sekitar <b>{int(z['Kebutuhan_Rombel'])} rombel</b> dan <b>{int(z['Kebutuhan_Guru'])} guru</b>.</div>", unsafe_allow_html=True)
+    with st.container(key="card-need"):
+        ui.card_head("Kebutuhan kelas dan guru", f"Kapasitas {kap} siswa per rombel, rasio {rasio} siswa per guru")
+        t = fd[["Tahun_Ajaran", "Proyeksi_Siswa_Aktif", "Est_Kelas_VII", "Est_Kelas_VIII", "Est_Kelas_IX", "Kebutuhan_Rombel", "Kebutuhan_Guru"]]
+        t.columns = ["Tahun ajaran", "Proyeksi siswa", "Kelas VII", "Kelas VIII", "Kelas IX", "Rombel", "Guru"]
+        st.markdown(ui.table(t), unsafe_allow_html=True)
+
+
+def page_laporan(df, settings):
+    ui.header("Laporan", not is_supabase_configured())
+    with st.container(key="card-lap"):
+        ui.card_head("Unduh rekap", "Rekap per tahun ajaran dan proyeksi dalam format Excel")
+        if df.empty:
+            st.markdown("<div class='note'>Belum ada data.</div>", unsafe_allow_html=True)
+            return
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as w:
+            df[["tahun_ajaran", "kelas_vii", "kelas_viii", "kelas_ix", "total_aktif", "total_laki", "total_perempuan"]].rename(columns={
+                "tahun_ajaran": "Tahun ajaran", "kelas_vii": "Kelas VII", "kelas_viii": "Kelas VIII", "kelas_ix": "Kelas IX",
+                "total_aktif": "Total", "total_laki": "Laki-laki", "total_perempuan": "Perempuan"}).to_excel(w, index=False, sheet_name="Rekap")
+            if len(df) >= MIN_TAHUN:
+                forecast(df.to_json(), 3, int(settings.get("kapasitas_rombel", 32)), int(settings.get("rasio_guru_siswa", 20)))["forecast_df"].to_excel(w, index=False, sheet_name="Proyeksi")
+        st.download_button("Unduh rekap (Excel)", buf.getvalue(), "Rekap_Kesiswaan.xlsx", icon=":material/download:")
+
+
+def page_unggah(user):
+    ui.header("Unggah Data", not is_supabase_configured())
+    with st.container(key="card-tpl"):
+        ui.card_head("1. Unduh templat", "Isi templat tanpa mengubah nama kolom. NIK dan NISN diketik sebagai teks, tanpa titik atau spasi.")
+        c1, c2 = st.columns(2)
+        mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        c1.download_button("Templat Siswa Aktif", template_bytes("Template_Data_Siswa_Aktif.xlsx"), "Template_Data_Siswa_Aktif.xlsx", mime, icon=":material/download:", use_container_width=True)
+        c2.download_button("Templat Alumni", template_bytes("Template_Data_Alumni.xlsx"), "Template_Data_Alumni.xlsx", mime, icon=":material/download:", use_container_width=True)
+    with st.container(key="card-up"):
+        ui.card_head("2. Unggah berkas", "Data diperiksa dulu. Berkas yang salah tidak disimpan.")
+        t1, t2 = st.tabs(["Siswa aktif", "Alumni"])
+        for tab, key, validate, saver, label in [(t1, "aktif", validate_siswa_aktif_df, upsert_siswa_aktif_3nf, "siswa aktif"),
+                                                 (t2, "alumni", validate_alumni_df, upsert_alumni_3nf, "alumni")]:
+            with tab:
+                up = st.file_uploader(f"Berkas Excel {label} (.xlsx)", type=["xlsx"], key=f"up_{key}")
+                if up is None:
+                    continue
+                ok, warnings, clean = validate(pd.read_excel(up, dtype=str))
+                if not ok:
+                    st.error(f"{len(warnings)} masalah ditemukan. Perbaiki di Excel lalu unggah ulang.")
+                    st.dataframe(pd.DataFrame({"Masalah": warnings}), hide_index=True, use_container_width=True)
+                else:
+                    st.success(f"{len(clean)} baris {label} lolos pemeriksaan.")
+                    st.dataframe(clean.head(10), hide_index=True, use_container_width=True)
+                    if st.button(f"Simpan data {label}", key=f"save_{key}"):
+                        saver(clean, up.name, user.get("id"))
+                        st.success("Data tersimpan.")
+                        st.rerun()
+
+
+def page_admin(user, settings):
+    ui.header("Pengguna & Pengaturan", not is_supabase_configured())
+    sb = get_supabase()
+    t1, t2 = st.tabs(["Akun", "Madrasah"])
+    with t1, st.container(key="card-akun"):
+        ui.card_head("Akun pengguna", "Akun baru dibuat lewat dashboard Supabase (Authentication → Users → Add user).")
         if sb:
             try:
-                res = sb.table("profiles").select("id, username, nama, jabatan, role, aktif").execute()
-                df_prof = pd.DataFrame(res.data or [])
-                if not df_prof.empty:
-                    st.dataframe(
-                        df_prof[["nama", "username", "jabatan", "role", "aktif"]],
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-            except Exception as e:
-                st.warning(f"Gagal memuat daftar pengguna: {e}")
-
-            st.markdown("#### Tambah Akun Kepala Sekolah Baru")
-            with st.form("form_add_kepsek"):
-                c1, c2 = st.columns(2)
-                nama_baru = c1.text_input("Nama Lengkap", placeholder="Drs. H. Ahmad Fauzi, M.Pd.")
-                jabatan_baru = c2.text_input("Jabatan", value="Kepala Madrasah")
-                email_baru = c1.text_input("Email Login", placeholder="kepsek@alfalahiyyah.sch.id")
-                pw_baru = c2.text_input("Kata Sandi Awal", type="password", placeholder="Minimal 6 karakter")
-                submitted = st.form_submit_button("➕ Buat Akun Kepala Sekolah", type="primary")
-                if submitted:
-                    if len(pw_baru) < 6 or not email_baru:
-                        st.error("Email wajib diisi dan kata sandi minimal 6 karakter.")
+                rows = sb.table("profiles").select("nama, username, jabatan, role, aktif").execute().data or []
+            except Exception:
+                rows = []
+                st.warning("Daftar pengguna tidak dapat dimuat.")
+            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+            with st.form("f_reset"):
+                em = st.text_input("Kirim tautan reset kata sandi ke email")
+                if st.form_submit_button("Kirim tautan reset") and em:
+                    try:
+                        sb.auth.reset_password_for_email(em.strip().lower())
+                        st.success("Tautan reset dikirim.")
+                    except Exception:
+                        st.error("Gagal mengirim tautan reset.")
+            with st.form("f_aktif"):
+                names = [r["username"] for r in rows if r.get("username")]
+                target = st.selectbox("Akun", names) if names else None
+                aktif = st.checkbox("Akun aktif", value=True)
+                if st.form_submit_button("Simpan status") and target:
+                    if target == user["email"].split("@")[0]:
+                        st.error("Anda tidak dapat menonaktifkan akun sendiri.")
                     else:
-                        try:
-                            sb.auth.sign_up({
-                                "email": email_baru.strip().lower(),
-                                "password": pw_baru,
-                                "options": {
-                                    "data": {
-                                        "nama": nama_baru or "Kepala Madrasah",
-                                        "jabatan": jabatan_baru,
-                                        "role": "kepala_sekolah",
-                                    }
-                                },
-                            })
-                            st.success(f"Akun {email_baru} berhasil ditambahkan dengan peran Kepala Sekolah.")
-                            st.rerun()
-                        except Exception as ex:
-                            st.error(f"Gagal menambahkan akun: {ex}")
-
-            st.markdown("#### Kirim Tautan Reset Kata Sandi Pengguna")
-            with st.form("form_reset_pw"):
-                target_email = st.text_input("Email Pengguna yang Lupa Kata Sandi", placeholder="kepsek@alfalahiyyah.sch.id")
-                if st.form_submit_button("🔄 Kirim Reset Kata Sandi"):
-                    if target_email:
-                        try:
-                            sb.auth.reset_password_for_email(target_email.strip().lower())
-                            st.success(f"Instruksi pengaturan ulang kata sandi telah dikirim ke {target_email}.")
-                        except Exception as ex:
-                            st.error(f"Gagal mengirim reset kata sandi: {ex}")
+                        sb.table("profiles").update({"aktif": aktif}).eq("username", target).execute()
+                        st.success("Status akun diperbarui.")
+                        st.rerun()
         else:
             init_demo_state()
-            users = st.session_state["demo_users"]
-            st.table([{"Email": k, "Nama": v["nama"], "Peran": v["role"]} for k, v in users.items()])
-            with st.form("demo_reset_form"):
-                em = st.selectbox("Pilih Akun untuk Reset Kata Sandi", list(users.keys()))
-                new_p = st.text_input("Kata Sandi Baru", type="password")
-                if st.form_submit_button("Simpan Kata Sandi Baru", type="primary"):
-                    if len(new_p) >= 6:
-                        st.session_state["demo_users"][em]["password"] = new_p
-                        st.success(f"Kata sandi untuk {em} berhasil diperbarui.")
-                    else:
-                        st.error("Kata sandi minimal 6 karakter.")
-
-    with tab_madrasah:
-        with st.form("form_settings"):
-            nama_m = st.text_input("Nama Madrasah", value=settings.get("nama_madrasah", "MTs Al-Falahiyyah"))
-            wa_op = st.text_input(
-                "Nomor WhatsApp Operator (Format 628xxx untuk tombol Lupa Kata Sandi)",
-                value=settings.get("wa_operator", "6281234567890"),
-            )
-            c1, c2 = st.columns(2)
-            kap_r = c1.number_input("Kapasitas Maksimal Siswa per Rombel", min_value=15, max_value=45, value=int(settings.get("kapasitas_rombel", 32)))
-            ras_g = c2.number_input("Rasio Ideal Siswa per Guru", min_value=10, max_value=40, value=int(settings.get("rasio_guru_siswa", 20)))
-            if st.form_submit_button("💾 Simpan Pengaturan", type="primary"):
-                save_setting("nama_madrasah", nama_m.strip())
-                save_setting("wa_operator", "".join(ch for ch in wa_op if ch.isdigit()))
-                save_setting("kapasitas_rombel", str(kap_r))
-                save_setting("rasio_guru_siswa", str(ras_g))
-                st.success("Pengaturan madrasah berhasil disimpan.")
-                st.rerun()
+            st.dataframe(pd.DataFrame([{"Email": k, "Nama": v["nama"], "Peran": v["role"]} for k, v in st.session_state["demo_users"].items()]), hide_index=True)
+    with t2, st.container(key="card-set"), st.form("f_set"):
+        ui.card_head("Pengaturan madrasah", "Dipakai untuk menghitung kebutuhan rombel dan guru")
+        nama_m = st.text_input("Nama madrasah", value=settings.get("nama_madrasah", "MTs Al-Falahiyyah"))
+        wa = st.text_input("WhatsApp operator (628xxx)", value=settings.get("wa_operator", ""))
+        c1, c2 = st.columns(2)
+        kap = c1.number_input("Kapasitas siswa per rombel", 15, 45, int(settings.get("kapasitas_rombel", 32)))
+        ras = c2.number_input("Rasio siswa per guru", 10, 40, int(settings.get("rasio_guru_siswa", 20)))
+        if st.form_submit_button("Simpan pengaturan"):
+            for k, v in [("nama_madrasah", nama_m.strip()), ("wa_operator", "".join(c for c in wa if c.isdigit())), ("kapasitas_rombel", kap), ("rasio_guru_siswa", ras)]:
+                save_setting(k, str(v))
+            st.success("Pengaturan tersimpan.")
+            st.rerun()
 
 
+# ============================== RANGKA ==============================
 def main():
     if "user" not in st.session_state:
-        render_login()
-        return
-
+        return render_login()
     user = st.session_state["user"]
+    is_op = user["role"] == "operator"
     settings = get_settings()
-    madrasah = settings.get("nama_madrasah", "MTs Al-Falahiyyah")
-    is_operator = user.get("role") == "operator"
+    df = get_rekap_siswa_aktif()
+
+    pages = [("home", "Dashboard", ":material/dashboard:"), ("fc", "Proyeksi", ":material/trending_up:")]
+    pages += [("up", "Unggah Data", ":material/upload:"), ("adm", "Pengguna & Pengaturan", ":material/settings:")] if is_op else [("lap", "Laporan", ":material/description:")]
+    page = st.session_state.setdefault("page", "home")
+    if page not in [p[0] for p in pages]:
+        page = "home"
 
     with st.sidebar:
-        st.markdown(f"### 🎓 {madrasah}")
-        st.caption(f"**{user['nama']}**\n{user['jabatan']}")
-        st.divider()
-
-        menu_options = ["📊 Ringkasan Dashboard", "📈 Proyeksi Siswa & Kelas"]
-        if is_operator:
-            menu_options.extend(["📥 Unggah Data (Aktif & Alumni)", "⚙️ Pengguna & Pengaturan"])
-
-        selected = st.radio("Menu Navigasi", menu_options, label_visibility="collapsed")
-        st.divider()
-        if st.button("🚪 Keluar", use_container_width=True):
+        st.markdown(f"<div class='logo'><i>🎓</i>{esc(settings.get('nama_madrasah', 'MTs Al-Falahiyyah'))}</div>", unsafe_allow_html=True)
+        for pid, label, icon in pages:
+            if st.button(label, icon=icon, key=f"nav-{'on' if page == pid else 'off'}-{pid}", use_container_width=True):
+                st.session_state["page"] = pid
+                st.rerun()
+        st.markdown("<div style='height:max(20px, calc(100vh - 720px))'></div>", unsafe_allow_html=True)
+        n = len(df)
+        segs = "".join("<i></i>" if k < n else "<i class='o'></i>" for k in range(max(10, n)))
+        st.markdown(f"<div class='sbcard'>Data tersimpan<small>{n} tahun ajaran</small><div class='seg' aria-hidden='true'>{segs}</div></div>"
+                    f"<div class='me'><span class='av'>{esc(user['nama'][:1].upper())}</span><div>{esc(user['nama'])}<small>{esc(user['jabatan'])}</small></div></div>", unsafe_allow_html=True)
+        if st.button("Keluar", icon=":material/logout:", key="logout", use_container_width=True):
             sb = get_supabase()
             if sb:
                 try:
                     sb.auth.sign_out()
                 except Exception:
                     pass
-            del st.session_state["user"]
+            st.session_state.clear()
             st.rerun()
 
-    df_rekap = get_rekap_siswa_aktif()
-    total_alumni, _ = get_alumni_summary()
+    if page == "home":
+        page_dashboard(df, settings, is_op, user["nama"])
+    elif page == "fc":
+        page_proyeksi(df, settings)
+    elif page == "up" and is_op:
+        page_unggah(user)
+    elif page == "adm" and is_op:
+        page_admin(user, settings)
+    elif page == "lap":
+        page_laporan(df, settings)
 
-    if selected == "📊 Ringkasan Dashboard":
-        render_dashboard_overview(df_rekap, total_alumni, settings)
-    elif selected == "📈 Proyeksi Siswa & Kelas":
-        render_prediksi(df_rekap, settings)
-    elif selected == "📥 Unggah Data (Aktif & Alumni)" and is_operator:
-        render_unggah_data(user)
-    elif selected == "⚙️ Pengguna & Pengaturan" and is_operator:
-        render_manajemen_akun(user, settings)
 
-
-if __name__ == "__main__":
-    main()
+main()
