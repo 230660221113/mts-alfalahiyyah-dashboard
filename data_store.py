@@ -152,7 +152,7 @@ def upsert_siswa_aktif_3nf(df_clean: pd.DataFrame, nama_file: str, user_id: str 
             })
         sb.table("master_kelas").upsert(kelas_records).execute()
 
-        # 3. Master Siswa
+       # 3. Master Siswa (status_terkini = Aktif)
         df_unique_siswa = df_clean.drop_duplicates(subset=["nik"]).copy()
         siswa_records = []
         for _, r in df_unique_siswa.iterrows():
@@ -174,8 +174,12 @@ def upsert_siswa_aktif_3nf(df_clean: pd.DataFrame, nama_file: str, user_id: str 
                 "status_terkini": "Aktif",
             })
         
-        for i in range(0, len(siswa_records), 50):
-            sb.table("master_siswa").upsert(siswa_records[i:i+50]).execute()
+        try:
+            for i in range(0, len(siswa_records), 50):
+                sb.table("master_siswa").upsert(siswa_records[i:i+50]).execute()
+        except Exception as e:
+            st.error(f"DETAIL ERROR SUPABASE: {str(e)}")
+            raise e
 
         # 4. Riwayat Siswa Aktif
         riwayat_records = df_clean[["nik", "tahun_ajaran", "kode_kelas"]].to_dict(orient="records")
